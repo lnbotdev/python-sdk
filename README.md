@@ -12,13 +12,13 @@ Give your AI agents, apps, and services access to Bitcoin over the Lightning Net
 ```python
 from lnbot import LnBot
 
-ln = LnBot(api_key="lnbot_...")
+ln = LnBot(api_key="key_...")
 
 invoice = ln.invoices.create(amount=1000, memo="Coffee")
 ln.payments.create(target="alice@ln.bot", amount=500)
 ```
 
-> LnBot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
+> LnBot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[Go SDK](https://pkg.go.dev/github.com/lnbotdev/go-sdk)**, **[Rust SDK](https://crates.io/crates/lnbot)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
 
 ---
 
@@ -57,7 +57,7 @@ print(invoice.bolt11)
 ### 3. Wait for payment
 
 ```python
-for event in ln.invoices.wait_for_settlement(invoice.number):
+for event in ln.invoices.watch(invoice.number):
     if event.event == "settled":
         print("Paid!")
 ```
@@ -85,11 +85,11 @@ Every method has an async equivalent via `AsyncLnBot`:
 ```python
 from lnbot import AsyncLnBot
 
-async with AsyncLnBot(api_key="lnbot_...") as ln:
+async with AsyncLnBot(api_key="key_...") as ln:
     wallet = await ln.wallets.current()
     invoice = await ln.invoices.create(amount=1000)
 
-    async for event in ln.invoices.wait_for_settlement(invoice.number):
+    async for event in ln.invoices.watch(invoice.number):
         if event.event == "settled":
             print("Paid!")
 ```
@@ -121,7 +121,7 @@ except LnBotError as e:
 from lnbot import LnBot
 
 ln = LnBot(
-    api_key="lnbot_...",            # or set LNBOT_API_KEY env var
+    api_key="key_...",            # or set LNBOT_API_KEY env var
     base_url="https://api.ln.bot",  # optional — this is the default
     timeout=30.0,                   # optional — request timeout in seconds
 )
@@ -148,7 +148,7 @@ The API key can also be provided via the `LNBOT_API_KEY` environment variable. I
 | `ln.invoices.create(amount=, memo=, reference=)` | Create a BOLT11 invoice |
 | `ln.invoices.list(limit=, after=)` | List invoices |
 | `ln.invoices.get(number)` | Get invoice by number |
-| `ln.invoices.wait_for_settlement(number, timeout=)` | SSE stream for settlement/expiry |
+| `ln.invoices.watch(number, timeout=)` | SSE stream for settlement/expiry |
 
 ### Payments
 
@@ -211,7 +211,13 @@ The API key can also be provided via the `LNBOT_API_KEY` environment variable. I
 - [ln.bot](https://ln.bot) — website
 - [Documentation](https://ln.bot/docs)
 - [GitHub](https://github.com/lnbotdev)
-- [TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)
+- [PyPI](https://pypi.org/project/lnbot/)
+
+## Other SDKs
+
+- [TypeScript SDK](https://github.com/lnbotdev/typescript-sdk) · [npm](https://www.npmjs.com/package/@lnbot/sdk)
+- [Go SDK](https://github.com/lnbotdev/go-sdk) · [pkg.go.dev](https://pkg.go.dev/github.com/lnbotdev/go-sdk)
+- [Rust SDK](https://github.com/lnbotdev/rust-sdk) · [crates.io](https://crates.io/crates/lnbot) · [docs.rs](https://docs.rs/lnbot)
 
 ## License
 

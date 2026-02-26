@@ -137,7 +137,7 @@ class InvoicesResource:
         """Get a single invoice by its number."""
         return parse(InvoiceResponse, self._c._get(f"/v1/invoices/{number}"))
 
-    def wait_for_settlement(self, number: int, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
+    def watch(self, number: int, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
@@ -280,7 +280,7 @@ class RestoreResource:
 class LnBot:
     """Synchronous LnBot API client.
 
-    >>> with LnBot(api_key="lnbot_...") as ln:
+    >>> with LnBot(api_key="key_...") as ln:
     ...     wallet = ln.wallets.current()
     """
 
@@ -397,7 +397,7 @@ class AsyncInvoicesResource:
         """Get a single invoice by its number."""
         return parse(InvoiceResponse, await self._c._get(f"/v1/invoices/{number}"))
 
-    async def wait_for_settlement(self, number: int, *, timeout: int | None = None) -> AsyncIterator[InvoiceEvent]:
+    async def watch(self, number: int, *, timeout: int | None = None) -> AsyncIterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
@@ -540,7 +540,7 @@ class AsyncRestoreResource:
 class AsyncLnBot:
     """Asynchronous LnBot API client.
 
-    >>> async with AsyncLnBot(api_key="lnbot_...") as ln:
+    >>> async with AsyncLnBot(api_key="key_...") as ln:
     ...     wallet = await ln.wallets.current()
     """
 
