@@ -18,6 +18,7 @@ from .errors import (
     _extract_message,
 )
 from .types import (
+    AddressInvoiceResponse,
     AddressResponse,
     ApiKeyResponse,
     BackupPasskeyBeginResponse,
@@ -25,6 +26,7 @@ from .types import (
     CreateWebhookResponse,
     InvoiceEvent,
     InvoiceResponse,
+    PaymentEvent,
     PaymentResponse,
     RecoveryBackupResponse,
     RecoveryRestoreResponse,
@@ -137,6 +139,16 @@ class InvoicesResource:
         """Get a single invoice by its number."""
         return parse(InvoiceResponse, self._c._get(f"/v1/invoices/{number}"))
 
+    def create_for_wallet(self, *, wallet_id: str, amount: int, reference: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
+        """Create an invoice for a specific wallet by ID. No authentication required."""
+        body = to_camel({"wallet_id": wallet_id, "amount": amount, "reference": reference, "comment": comment})
+        return parse(AddressInvoiceResponse, self._c._post("/v1/invoices/for-wallet", body))
+
+    def create_for_address(self, *, address: str, amount: int, tag: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
+        """Create an invoice for a Lightning address. No authentication required."""
+        body = to_camel({"address": address, "amount": amount, "tag": tag, "comment": comment})
+        return parse(AddressInvoiceResponse, self._c._post("/v1/invoices/for-address", body))
+
     def watch(self, number: int, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
@@ -161,13 +173,13 @@ class InvoicesResource:
 
 
 class PaymentsResource:
-    """Send sats to Lightning addresses or BOLT11 invoices."""
+    """Send sats to Lightning addresses, LNURLs, or BOLT11 invoices."""
 
     def __init__(self, client: LnBot) -> None:
         self._c = client
 
     def create(self, *, target: str, amount: int | None = None, idempotency_key: str | None = None, max_fee: int | None = None, reference: str | None = None) -> PaymentResponse:
-        """Send a payment to *target* (Lightning address or BOLT11 invoice)."""
+        """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice)."""
         body = to_camel({"target": target, "amount": amount, "idempotency_key": idempotency_key, "max_fee": max_fee, "reference": reference})
         return parse(PaymentResponse, self._c._post("/v1/payments", body))
 
@@ -178,6 +190,28 @@ class PaymentsResource:
     def get(self, number: int) -> PaymentResponse:
         """Get a single payment by its number."""
         return parse(PaymentResponse, self._c._get(f"/v1/payments/{number}"))
+
+    def watch(self, number: int, *, timeout: int | None = None) -> Iterator[PaymentEvent]:
+        """Stream SSE events until the payment settles or fails."""
+        params = _qs({"timeout": timeout})
+        headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
+        if self._c._api_key:
+            headers["Authorization"] = f"Bearer {self._c._api_key}"
+        with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number}/events", params=params, headers=headers) as resp:
+            _raise_for_status(resp)
+            event_type = ""
+            for line in resp.iter_lines():
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if raw and event_type:
+                        try:
+                            data = parse(PaymentResponse, json.loads(raw))
+                            yield PaymentEvent(event=event_type, data=data)  # type: ignore[arg-type]
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        event_type = ""
 
 
 class AddressesResource:
@@ -397,6 +431,16 @@ class AsyncInvoicesResource:
         """Get a single invoice by its number."""
         return parse(InvoiceResponse, await self._c._get(f"/v1/invoices/{number}"))
 
+    async def create_for_wallet(self, *, wallet_id: str, amount: int, reference: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
+        """Create an invoice for a specific wallet by ID. No authentication required."""
+        body = to_camel({"wallet_id": wallet_id, "amount": amount, "reference": reference, "comment": comment})
+        return parse(AddressInvoiceResponse, await self._c._post("/v1/invoices/for-wallet", body))
+
+    async def create_for_address(self, *, address: str, amount: int, tag: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
+        """Create an invoice for a Lightning address. No authentication required."""
+        body = to_camel({"address": address, "amount": amount, "tag": tag, "comment": comment})
+        return parse(AddressInvoiceResponse, await self._c._post("/v1/invoices/for-address", body))
+
     async def watch(self, number: int, *, timeout: int | None = None) -> AsyncIterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
@@ -421,13 +465,13 @@ class AsyncInvoicesResource:
 
 
 class AsyncPaymentsResource:
-    """Send sats to Lightning addresses or BOLT11 invoices (async)."""
+    """Send sats to Lightning addresses, LNURLs, or BOLT11 invoices (async)."""
 
     def __init__(self, client: AsyncLnBot) -> None:
         self._c = client
 
     async def create(self, *, target: str, amount: int | None = None, idempotency_key: str | None = None, max_fee: int | None = None, reference: str | None = None) -> PaymentResponse:
-        """Send a payment to *target* (Lightning address or BOLT11 invoice)."""
+        """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice)."""
         body = to_camel({"target": target, "amount": amount, "idempotency_key": idempotency_key, "max_fee": max_fee, "reference": reference})
         return parse(PaymentResponse, await self._c._post("/v1/payments", body))
 
@@ -438,6 +482,28 @@ class AsyncPaymentsResource:
     async def get(self, number: int) -> PaymentResponse:
         """Get a single payment by its number."""
         return parse(PaymentResponse, await self._c._get(f"/v1/payments/{number}"))
+
+    async def watch(self, number: int, *, timeout: int | None = None) -> AsyncIterator[PaymentEvent]:
+        """Stream SSE events until the payment settles or fails."""
+        params = _qs({"timeout": timeout})
+        headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
+        if self._c._api_key:
+            headers["Authorization"] = f"Bearer {self._c._api_key}"
+        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number}/events", params=params, headers=headers) as resp:
+            _raise_for_status(resp)
+            event_type = ""
+            async for line in resp.aiter_lines():
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if raw and event_type:
+                        try:
+                            data = parse(PaymentResponse, json.loads(raw))
+                            yield PaymentEvent(event=event_type, data=data)  # type: ignore[arg-type]
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        event_type = ""
 
 
 class AsyncAddressesResource:

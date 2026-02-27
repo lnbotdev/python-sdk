@@ -72,6 +72,17 @@ class InvoiceResponse:
 
 
 # ---------------------------------------------------------------------------
+# Invoices (unauthenticated)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AddressInvoiceResponse:
+    bolt11: str
+    amount: int
+    expires_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Payments
 # ---------------------------------------------------------------------------
 
@@ -192,6 +203,12 @@ class RestorePasskeyCompleteResponse:
 class InvoiceEvent:
     event: Literal["settled", "expired"]
     data: InvoiceResponse
+
+
+@dataclass(frozen=True)
+class PaymentEvent:
+    event: Literal["settled", "failed"]
+    data: PaymentResponse
 
 
 # ---------------------------------------------------------------------------

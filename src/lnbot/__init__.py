@@ -15,6 +15,7 @@ from .errors import (
     UnauthorizedError,
 )
 from .types import (
+    AddressInvoiceResponse,
     AddressResponse,
     ApiKeyResponse,
     BackupPasskeyBeginResponse,
@@ -23,6 +24,7 @@ from .types import (
     InvoiceEvent,
     InvoiceResponse,
     InvoiceStatus,
+    PaymentEvent,
     PaymentResponse,
     PaymentStatus,
     RecoveryBackupResponse,
@@ -54,8 +56,10 @@ __all__ = [
     "InvoiceResponse",
     "InvoiceStatus",
     "InvoiceEvent",
+    "AddressInvoiceResponse",
     "PaymentResponse",
     "PaymentStatus",
+    "PaymentEvent",
     "AddressResponse",
     "TransferAddressResponse",
     "TransactionResponse",
