@@ -39,15 +39,6 @@ class CreateWalletResponse:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class ApiKeyResponse:
-    id: str
-    name: str
-    hint: str
-    created_at: str | None = None
-    last_used_at: str | None = None
-
-
-@dataclass(frozen=True)
 class RotateApiKeyResponse:
     key: str
     name: str
@@ -196,6 +187,41 @@ class RestorePasskeyCompleteResponse:
     name: str
     primary_key: str
     secondary_key: str
+
+
+# ---------------------------------------------------------------------------
+# L402
+# ---------------------------------------------------------------------------
+
+L402PaymentStatus = Literal["pending", "processing", "settled", "failed"]
+
+
+@dataclass(frozen=True)
+class L402ChallengeResponse:
+    macaroon: str
+    invoice: str
+    payment_hash: str
+    expires_at: str
+    www_authenticate: str
+
+
+@dataclass(frozen=True)
+class VerifyL402Response:
+    valid: bool
+    payment_hash: str | None = None
+    caveats: list[str] | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class L402PayResponse:
+    payment_hash: str
+    amount: int
+    payment_number: int
+    status: L402PaymentStatus
+    authorization: str | None = None
+    preimage: str | None = None
+    fee: int | None = None
 
 
 # ---------------------------------------------------------------------------

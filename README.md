@@ -131,6 +131,24 @@ The API key can also be provided via the `LNBOT_API_KEY` environment variable. I
 
 ---
 
+## L402 paywalls
+
+Monetize APIs with Lightning-native authentication:
+
+```python
+# Create a challenge (server side)
+challenge = ln.l402.create_challenge(amount=100, description="API access", expiry_seconds=3600)
+
+# Pay the challenge (client side)
+result = ln.l402.pay(www_authenticate=challenge.www_authenticate)
+
+# Verify a token (server side, stateless)
+v = ln.l402.verify(authorization=result.authorization)
+print(v.valid)
+```
+
+---
+
 ## API reference
 
 ### Wallets
@@ -185,8 +203,15 @@ The API key can also be provided via the `LNBOT_API_KEY` environment variable. I
 
 | Method | Description |
 | --- | --- |
-| `ln.keys.list()` | List API keys (metadata only) |
 | `ln.keys.rotate(slot)` | Rotate a key (0 = primary, 1 = secondary) |
+
+### L402
+
+| Method | Description |
+| --- | --- |
+| `ln.l402.create_challenge(amount=, ...)` | Create an L402 challenge (invoice + macaroon) |
+| `ln.l402.verify(authorization=)` | Verify an L402 token (stateless) |
+| `ln.l402.pay(www_authenticate=, ...)` | Pay an L402 challenge, get Authorization header |
 
 ### Backup & Restore
 

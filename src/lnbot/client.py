@@ -20,14 +20,16 @@ from .errors import (
 from .types import (
     AddressInvoiceResponse,
     AddressResponse,
-    ApiKeyResponse,
     BackupPasskeyBeginResponse,
     CreateWalletResponse,
     CreateWebhookResponse,
     InvoiceEvent,
     InvoiceResponse,
+    L402ChallengeResponse,
+    L402PayResponse,
     PaymentEvent,
     PaymentResponse,
+    VerifyL402Response,
     WalletEvent,
     RecoveryBackupResponse,
     RecoveryRestoreResponse,
@@ -108,14 +110,10 @@ class WalletsResource:
 
 
 class KeysResource:
-    """API key listing and rotation."""
+    """API key rotation."""
 
     def __init__(self, client: LnBot) -> None:
         self._c = client
-
-    def list(self) -> list[ApiKeyResponse]:
-        """List API keys (metadata only, keys are not returned)."""
-        return [parse(ApiKeyResponse, item) for item in self._c._get("/v1/keys")]
 
     def rotate(self, slot: int) -> RotateApiKeyResponse:
         """Rotate an API key. *slot* 0 = primary, 1 = secondary."""
@@ -136,9 +134,9 @@ class InvoicesResource:
         """List invoices, optionally paginated."""
         return [parse(InvoiceResponse, item) for item in self._c._get("/v1/invoices", params=_qs({"limit": limit, "after": after}))]
 
-    def get(self, number: int) -> InvoiceResponse:
-        """Get a single invoice by its number."""
-        return parse(InvoiceResponse, self._c._get(f"/v1/invoices/{number}"))
+    def get(self, number_or_hash: int | str) -> InvoiceResponse:
+        """Get a single invoice by its number or payment hash."""
+        return parse(InvoiceResponse, self._c._get(f"/v1/invoices/{number_or_hash}"))
 
     def create_for_wallet(self, *, wallet_id: str, amount: int, reference: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
         """Create an invoice for a specific wallet by ID. No authentication required."""
@@ -150,13 +148,13 @@ class InvoicesResource:
         body = to_camel({"address": address, "amount": amount, "tag": tag, "comment": comment})
         return parse(AddressInvoiceResponse, self._c._post("/v1/invoices/for-address", body))
 
-    def watch(self, number: int, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
+    def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
         if self._c._api_key:
             headers["Authorization"] = f"Bearer {self._c._api_key}"
-        with self._c._http.stream("GET", f"{self._c._base_url}/v1/invoices/{number}/events", params=params, headers=headers) as resp:
+        with self._c._http.stream("GET", f"{self._c._base_url}/v1/invoices/{number_or_hash}/events", params=params, headers=headers) as resp:
             _raise_for_status(resp)
             event_type = ""
             for line in resp.iter_lines():
@@ -188,17 +186,17 @@ class PaymentsResource:
         """List payments, optionally paginated."""
         return [parse(PaymentResponse, item) for item in self._c._get("/v1/payments", params=_qs({"limit": limit, "after": after}))]
 
-    def get(self, number: int) -> PaymentResponse:
-        """Get a single payment by its number."""
-        return parse(PaymentResponse, self._c._get(f"/v1/payments/{number}"))
+    def get(self, number_or_hash: int | str) -> PaymentResponse:
+        """Get a single payment by its number or payment hash."""
+        return parse(PaymentResponse, self._c._get(f"/v1/payments/{number_or_hash}"))
 
-    def watch(self, number: int, *, timeout: int | None = None) -> Iterator[PaymentEvent]:
+    def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> Iterator[PaymentEvent]:
         """Stream SSE events until the payment settles or fails."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
         if self._c._api_key:
             headers["Authorization"] = f"Bearer {self._c._api_key}"
-        with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number}/events", params=params, headers=headers) as resp:
+        with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number_or_hash}/events", params=params, headers=headers) as resp:
             _raise_for_status(resp)
             event_type = ""
             for line in resp.iter_lines():
@@ -336,6 +334,27 @@ class RestoreResource:
         return parse(RestorePasskeyCompleteResponse, self._c._post("/v1/restore/passkey/complete", to_camel({"session_id": session_id, "assertion": assertion})))
 
 
+class L402Resource:
+    """L402 paywall authentication."""
+
+    def __init__(self, client: LnBot) -> None:
+        self._c = client
+
+    def create_challenge(self, *, amount: int, description: str | None = None, expiry_seconds: int | None = None, caveats: list[str] | None = None) -> L402ChallengeResponse:
+        """Create an L402 challenge (invoice + macaroon) for paywall authentication."""
+        body = to_camel({"amount": amount, "description": description, "expiry_seconds": expiry_seconds, "caveats": caveats})
+        return parse(L402ChallengeResponse, self._c._post("/v1/l402/challenges", body))
+
+    def verify(self, *, authorization: str) -> VerifyL402Response:
+        """Verify an L402 authorization token (stateless)."""
+        return parse(VerifyL402Response, self._c._post("/v1/l402/verify", {"authorization": authorization}))
+
+    def pay(self, *, www_authenticate: str, max_fee: int | None = None, reference: str | None = None, wait: bool | None = None, timeout: int | None = None) -> L402PayResponse:
+        """Pay an L402 challenge and get a ready-to-use Authorization header."""
+        body = to_camel({"www_authenticate": www_authenticate, "max_fee": max_fee, "reference": reference, "wait": wait, "timeout": timeout})
+        return parse(L402PayResponse, self._c._post("/v1/l402/pay", body))
+
+
 # ---------------------------------------------------------------------------
 # Sync client
 # ---------------------------------------------------------------------------
@@ -369,6 +388,7 @@ class LnBot:
         self.events = EventsResource(self)
         self.backup = BackupResource(self)
         self.restore = RestoreResource(self)
+        self.l402 = L402Resource(self)
 
     def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         resp = self._http.get(f"{self._base_url}{path}", headers=_headers(self._api_key), params=params)
@@ -429,14 +449,10 @@ class AsyncWalletsResource:
 
 
 class AsyncKeysResource:
-    """API key listing and rotation (async)."""
+    """API key rotation (async)."""
 
     def __init__(self, client: AsyncLnBot) -> None:
         self._c = client
-
-    async def list(self) -> list[ApiKeyResponse]:
-        """List API keys (metadata only, keys are not returned)."""
-        return [parse(ApiKeyResponse, item) for item in await self._c._get("/v1/keys")]
 
     async def rotate(self, slot: int) -> RotateApiKeyResponse:
         """Rotate an API key. *slot* 0 = primary, 1 = secondary."""
@@ -457,9 +473,9 @@ class AsyncInvoicesResource:
         """List invoices, optionally paginated."""
         return [parse(InvoiceResponse, item) for item in await self._c._get("/v1/invoices", params=_qs({"limit": limit, "after": after}))]
 
-    async def get(self, number: int) -> InvoiceResponse:
-        """Get a single invoice by its number."""
-        return parse(InvoiceResponse, await self._c._get(f"/v1/invoices/{number}"))
+    async def get(self, number_or_hash: int | str) -> InvoiceResponse:
+        """Get a single invoice by its number or payment hash."""
+        return parse(InvoiceResponse, await self._c._get(f"/v1/invoices/{number_or_hash}"))
 
     async def create_for_wallet(self, *, wallet_id: str, amount: int, reference: str | None = None, comment: str | None = None) -> AddressInvoiceResponse:
         """Create an invoice for a specific wallet by ID. No authentication required."""
@@ -471,13 +487,13 @@ class AsyncInvoicesResource:
         body = to_camel({"address": address, "amount": amount, "tag": tag, "comment": comment})
         return parse(AddressInvoiceResponse, await self._c._post("/v1/invoices/for-address", body))
 
-    async def watch(self, number: int, *, timeout: int | None = None) -> AsyncIterator[InvoiceEvent]:
+    async def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> AsyncIterator[InvoiceEvent]:
         """Stream SSE events until the invoice is settled or expires."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
         if self._c._api_key:
             headers["Authorization"] = f"Bearer {self._c._api_key}"
-        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/invoices/{number}/events", params=params, headers=headers) as resp:
+        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/invoices/{number_or_hash}/events", params=params, headers=headers) as resp:
             _raise_for_status(resp)
             event_type = ""
             async for line in resp.aiter_lines():
@@ -509,17 +525,17 @@ class AsyncPaymentsResource:
         """List payments, optionally paginated."""
         return [parse(PaymentResponse, item) for item in await self._c._get("/v1/payments", params=_qs({"limit": limit, "after": after}))]
 
-    async def get(self, number: int) -> PaymentResponse:
-        """Get a single payment by its number."""
-        return parse(PaymentResponse, await self._c._get(f"/v1/payments/{number}"))
+    async def get(self, number_or_hash: int | str) -> PaymentResponse:
+        """Get a single payment by its number or payment hash."""
+        return parse(PaymentResponse, await self._c._get(f"/v1/payments/{number_or_hash}"))
 
-    async def watch(self, number: int, *, timeout: int | None = None) -> AsyncIterator[PaymentEvent]:
+    async def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> AsyncIterator[PaymentEvent]:
         """Stream SSE events until the payment settles or fails."""
         params = _qs({"timeout": timeout})
         headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
         if self._c._api_key:
             headers["Authorization"] = f"Bearer {self._c._api_key}"
-        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number}/events", params=params, headers=headers) as resp:
+        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/payments/{number_or_hash}/events", params=params, headers=headers) as resp:
             _raise_for_status(resp)
             event_type = ""
             async for line in resp.aiter_lines():
@@ -657,6 +673,27 @@ class AsyncRestoreResource:
         return parse(RestorePasskeyCompleteResponse, await self._c._post("/v1/restore/passkey/complete", to_camel({"session_id": session_id, "assertion": assertion})))
 
 
+class AsyncL402Resource:
+    """L402 paywall authentication (async)."""
+
+    def __init__(self, client: AsyncLnBot) -> None:
+        self._c = client
+
+    async def create_challenge(self, *, amount: int, description: str | None = None, expiry_seconds: int | None = None, caveats: list[str] | None = None) -> L402ChallengeResponse:
+        """Create an L402 challenge (invoice + macaroon) for paywall authentication."""
+        body = to_camel({"amount": amount, "description": description, "expiry_seconds": expiry_seconds, "caveats": caveats})
+        return parse(L402ChallengeResponse, await self._c._post("/v1/l402/challenges", body))
+
+    async def verify(self, *, authorization: str) -> VerifyL402Response:
+        """Verify an L402 authorization token (stateless)."""
+        return parse(VerifyL402Response, await self._c._post("/v1/l402/verify", {"authorization": authorization}))
+
+    async def pay(self, *, www_authenticate: str, max_fee: int | None = None, reference: str | None = None, wait: bool | None = None, timeout: int | None = None) -> L402PayResponse:
+        """Pay an L402 challenge and get a ready-to-use Authorization header."""
+        body = to_camel({"www_authenticate": www_authenticate, "max_fee": max_fee, "reference": reference, "wait": wait, "timeout": timeout})
+        return parse(L402PayResponse, await self._c._post("/v1/l402/pay", body))
+
+
 # ---------------------------------------------------------------------------
 # Async client
 # ---------------------------------------------------------------------------
@@ -690,6 +727,7 @@ class AsyncLnBot:
         self.events = AsyncEventsResource(self)
         self.backup = AsyncBackupResource(self)
         self.restore = AsyncRestoreResource(self)
+        self.l402 = AsyncL402Resource(self)
 
     async def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         resp = await self._http.get(f"{self._base_url}{path}", headers=_headers(self._api_key), params=params)
