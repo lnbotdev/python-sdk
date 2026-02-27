@@ -18,5 +18,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: pip install -e .
-      - run: python -c "from lnbot import LnBot, AsyncLnBot; print('OK')"
+      - run: pip install -e ".[test]"
+      - run: pytest tests/ -v

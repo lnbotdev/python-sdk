@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: "3.13"
 
+      - run: pip install -e ".[test]"
+      - run: pytest tests/ -v
+
       - run: pip install build
       - run: python -m build
 

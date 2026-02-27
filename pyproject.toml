@@ -46,11 +46,17 @@ classifiers = [
 ]
 dependencies = ["httpx>=0.27"]
 
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
 [project.urls]
 Homepage = "https://ln.bot"
 Documentation = "https://ln.bot/docs"
 Repository = "https://github.com/lnbotdev/python-sdk"
 Issues = "https://github.com/lnbotdev/python-sdk/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lnbot"]
