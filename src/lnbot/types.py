@@ -65,6 +65,7 @@ class InvoiceResponse:
     bolt11: str
     reference: str | None = None
     memo: str | None = None
+    preimage: str | None = None
     tx_number: int | None = None
     created_at: str | None = None
     settled_at: str | None = None
@@ -92,9 +93,11 @@ class PaymentResponse:
     status: PaymentStatus
     amount: int
     max_fee: int
+    service_fee: int
     address: str
     actual_fee: int | None = None
     reference: str | None = None
+    preimage: str | None = None
     tx_number: int | None = None
     failure_reason: str | None = None
     created_at: str | None = None
@@ -209,6 +212,22 @@ class InvoiceEvent:
 class PaymentEvent:
     event: Literal["settled", "failed"]
     data: PaymentResponse
+
+
+WalletEventType = Literal[
+    "invoice.created",
+    "invoice.settled",
+    "payment.created",
+    "payment.settled",
+    "payment.failed",
+]
+
+
+@dataclass(frozen=True)
+class WalletEvent:
+    event: WalletEventType
+    created_at: str
+    data: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------

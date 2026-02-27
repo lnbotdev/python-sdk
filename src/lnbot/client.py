@@ -28,6 +28,7 @@ from .types import (
     InvoiceResponse,
     PaymentEvent,
     PaymentResponse,
+    WalletEvent,
     RecoveryBackupResponse,
     RecoveryRestoreResponse,
     RestorePasskeyBeginResponse,
@@ -269,6 +270,34 @@ class WebhooksResource:
         self._c._delete(f"/v1/webhooks/{webhook_id}")
 
 
+class EventsResource:
+    """Real-time wallet event stream."""
+
+    def __init__(self, client: LnBot) -> None:
+        self._c = client
+
+    def stream(self) -> Iterator[WalletEvent]:
+        """Stream all wallet events via SSE."""
+        headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
+        if self._c._api_key:
+            headers["Authorization"] = f"Bearer {self._c._api_key}"
+        with self._c._http.stream("GET", f"{self._c._base_url}/v1/events", headers=headers) as resp:
+            _raise_for_status(resp)
+            for line in resp.iter_lines():
+                if line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if raw:
+                        try:
+                            data = json.loads(raw)
+                            yield WalletEvent(
+                                event=data.get("event", ""),
+                                created_at=data.get("createdAt", ""),
+                                data=data.get("data", {}),
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+
 class BackupResource:
     """Wallet backup via recovery passphrase or passkey."""
 
@@ -337,6 +366,7 @@ class LnBot:
         self.addresses = AddressesResource(self)
         self.transactions = TransactionsResource(self)
         self.webhooks = WebhooksResource(self)
+        self.events = EventsResource(self)
         self.backup = BackupResource(self)
         self.restore = RestoreResource(self)
 
@@ -561,6 +591,34 @@ class AsyncWebhooksResource:
         await self._c._delete(f"/v1/webhooks/{webhook_id}")
 
 
+class AsyncEventsResource:
+    """Real-time wallet event stream (async)."""
+
+    def __init__(self, client: AsyncLnBot) -> None:
+        self._c = client
+
+    async def stream(self) -> AsyncIterator[WalletEvent]:
+        """Stream all wallet events via SSE."""
+        headers = {"Accept": "text/event-stream", "User-Agent": _USER_AGENT}
+        if self._c._api_key:
+            headers["Authorization"] = f"Bearer {self._c._api_key}"
+        async with self._c._http.stream("GET", f"{self._c._base_url}/v1/events", headers=headers) as resp:
+            _raise_for_status(resp)
+            async for line in resp.aiter_lines():
+                if line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if raw:
+                        try:
+                            data = json.loads(raw)
+                            yield WalletEvent(
+                                event=data.get("event", ""),
+                                created_at=data.get("createdAt", ""),
+                                data=data.get("data", {}),
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+
 class AsyncBackupResource:
     """Wallet backup via recovery passphrase or passkey (async)."""
 
@@ -629,6 +687,7 @@ class AsyncLnBot:
         self.addresses = AsyncAddressesResource(self)
         self.transactions = AsyncTransactionsResource(self)
         self.webhooks = AsyncWebhooksResource(self)
+        self.events = AsyncEventsResource(self)
         self.backup = AsyncBackupResource(self)
         self.restore = AsyncRestoreResource(self)
 
