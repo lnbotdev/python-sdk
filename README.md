@@ -1,11 +1,11 @@
-# lnbot
+# ln.bot
 
 [![PyPI version](https://img.shields.io/pypi/v/lnbot)](https://pypi.org/project/lnbot/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/lnbot)](https://pypi.org/project/lnbot/)
 [![Python](https://img.shields.io/pypi/pyversions/lnbot)](https://pypi.org/project/lnbot/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-**The official Python SDK for [LnBot](https://ln.bot)** — Bitcoin for AI Agents.
+**The official Python SDK for [ln.bot](https://ln.bot)** — Bitcoin for AI Agents.
 
 Give your AI agents, apps, and services access to Bitcoin over the Lightning Network. Create wallets, send and receive sats, and get real-time payment notifications.
 
@@ -18,7 +18,7 @@ invoice = ln.invoices.create(amount=1000, memo="Coffee")
 ln.payments.create(target="alice@ln.bot", amount=500)
 ```
 
-> LnBot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[Go SDK](https://pkg.go.dev/github.com/lnbotdev/go-sdk)**, **[Rust SDK](https://crates.io/crates/lnbot)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
+> ln.bot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[Go SDK](https://pkg.go.dev/github.com/lnbotdev/go-sdk)**, **[Rust SDK](https://crates.io/crates/lnbot)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
 
 ---
 
