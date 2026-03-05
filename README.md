@@ -12,13 +12,13 @@ Give your AI agents, apps, and services access to Bitcoin over the Lightning Net
 ```python
 from lnbot import LnBot
 
-ln = LnBot(api_key="key_...")
+ln = LnBot(api_key="uk_...")
+w = ln.wallet("wal_...")
 
-invoice = ln.invoices.create(amount=1000, memo="Coffee")
-ln.payments.create(target="alice@ln.bot", amount=500)
+invoice = w.invoices.create(amount=1000, memo="Coffee")
 ```
 
-> ln.bot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[Go SDK](https://pkg.go.dev/github.com/lnbotdev/go-sdk)**, **[Rust SDK](https://crates.io/crates/lnbot)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
+> ln.bot also ships a **[TypeScript SDK](https://www.npmjs.com/package/@lnbot/sdk)**, **[C# SDK](https://www.nuget.org/packages/LnBot)**, **[Go SDK](https://pkg.go.dev/github.com/lnbotdev/go-sdk)**, **[Rust SDK](https://crates.io/crates/lnbot)**, **[CLI](https://ln.bot/docs)**, and **[MCP server](https://ln.bot/docs)**.
 
 ---
 
@@ -32,48 +32,90 @@ pip install lnbot
 
 ## Quick start
 
-### 1. Create a wallet
+### Register an account
 
 ```python
 from lnbot import LnBot
 
 ln = LnBot()
-wallet = ln.wallets.create(name="my-agent")
-
-print(wallet.primary_key)          # your API key
-print(wallet.address)              # your Lightning address
-print(wallet.recovery_passphrase)  # back this up!
+account = ln.register()
+print(account.primary_key)
+print(account.recovery_passphrase)
 ```
 
-### 2. Receive sats
+### Create a wallet
 
 ```python
-ln = LnBot(api_key=wallet.primary_key)
+ln = LnBot(api_key=account.primary_key)
+wallet = ln.wallets.create()
+print(wallet.wallet_id)
+```
 
-invoice = ln.invoices.create(amount=1000, memo="Payment for task #42")
+### Receive sats
+
+```python
+w = ln.wallet(wallet.wallet_id)
+
+invoice = w.invoices.create(amount=1000, memo="Payment for task #42")
 print(invoice.bolt11)
 ```
 
-### 3. Wait for payment
+### Wait for payment (SSE)
 
 ```python
-for event in ln.invoices.watch(invoice.number):
+for event in w.invoices.watch(invoice.number):
     if event.event == "settled":
         print("Paid!")
+        break
 ```
 
-### 4. Send sats
+### Send sats
 
 ```python
-ln.payments.create(target="alice@ln.bot", amount=500)
-ln.payments.create(target="lnbc10u1p...")
+w.payments.create(target="alice@ln.bot", amount=500)
 ```
 
-### 5. Check balance
+### Check balance
 
 ```python
-wallet = ln.wallets.current()
-print(f"{wallet.available} sats available")
+info = w.get()
+print(f"{info.available} sats available")
+```
+
+---
+
+## Wallet-scoped API
+
+All wallet operations go through a `Wallet` handle obtained via `ln.wallet(wallet_id)`:
+
+```python
+w = ln.wallet("wal_abc123")
+
+# Wallet info
+info = w.get()
+w.update(name="production")
+
+# Sub-resources
+w.key           # Wallet key management (wk_ keys)
+w.invoices      # Create, list, get, watch invoices
+w.payments      # Send, list, get, watch, resolve payments
+w.addresses     # Create, list, delete, transfer Lightning addresses
+w.transactions  # List transaction history
+w.webhooks      # Create, list, delete webhook endpoints
+w.events        # Real-time SSE event stream
+w.l402          # L402 paywall authentication
+```
+
+Account-level operations stay on the client:
+
+```python
+ln.register()                       # Register new account
+ln.me()                             # Get authenticated identity
+ln.wallets.create()                 # Create wallet
+ln.wallets.list()                   # List wallets
+ln.keys.rotate(0)                   # Rotate account key
+ln.invoices.create_for_wallet(...)  # Public invoice by wallet ID
+ln.invoices.create_for_address(...) # Public invoice by address
 ```
 
 ---
@@ -85,13 +127,15 @@ Every method has an async equivalent via `AsyncLnBot`:
 ```python
 from lnbot import AsyncLnBot
 
-async with AsyncLnBot(api_key="key_...") as ln:
-    wallet = await ln.wallets.current()
-    invoice = await ln.invoices.create(amount=1000)
+async with AsyncLnBot(api_key="uk_...") as ln:
+    w = ln.wallet("wal_...")
+    info = await w.get()
+    invoice = await w.invoices.create(amount=1000)
 
-    async for event in ln.invoices.watch(invoice.number):
+    async for event in w.invoices.watch(invoice.number):
         if event.event == "settled":
             print("Paid!")
+            break
 ```
 
 ---
@@ -102,7 +146,7 @@ async with AsyncLnBot(api_key="key_...") as ln:
 from lnbot import LnBot, BadRequestError, UnauthorizedError, NotFoundError, ConflictError, LnBotError
 
 try:
-    ln.payments.create(target="invalid", amount=100)
+    w.payments.create(target="invalid", amount=100)
 except BadRequestError:
     ...  # 400
 except UnauthorizedError:
@@ -121,9 +165,9 @@ except LnBotError as e:
 from lnbot import LnBot
 
 ln = LnBot(
-    api_key="key_...",            # or set LNBOT_API_KEY env var
-    base_url="https://api.ln.bot",  # optional — this is the default
-    timeout=30.0,                   # optional — request timeout in seconds
+    api_key="uk_...",                 # or set LNBOT_API_KEY env var
+    base_url="https://api.ln.bot",    # optional — this is the default
+    timeout=30.0,                     # optional — request timeout in seconds
 )
 ```
 
@@ -133,98 +177,30 @@ The API key can also be provided via the `LNBOT_API_KEY` environment variable. I
 
 ## L402 paywalls
 
-Monetize APIs with Lightning-native authentication:
-
 ```python
+w = ln.wallet("wal_...")
+
 # Create a challenge (server side)
-challenge = ln.l402.create_challenge(amount=100, description="API access", expiry_seconds=3600)
+challenge = w.l402.create_challenge(amount=100, description="API access", expiry_seconds=3600)
 
 # Pay the challenge (client side)
-result = ln.l402.pay(www_authenticate=challenge.www_authenticate)
+result = w.l402.pay(www_authenticate=challenge.www_authenticate)
 
 # Verify a token (server side, stateless)
-v = ln.l402.verify(authorization=result.authorization)
+v = w.l402.verify(authorization=result.authorization)
 print(v.valid)
 ```
 
 ---
 
-## API reference
+## Features
 
-### Wallets
-
-| Method | Description |
-| --- | --- |
-| `ln.wallets.create(name=)` | Create a new wallet (no auth required) |
-| `ln.wallets.current()` | Get current wallet info and balance |
-| `ln.wallets.update(name=)` | Update wallet name |
-
-### Invoices
-
-| Method | Description |
-| --- | --- |
-| `ln.invoices.create(amount=, memo=, reference=)` | Create a BOLT11 invoice |
-| `ln.invoices.list(limit=, after=)` | List invoices |
-| `ln.invoices.get(number)` | Get invoice by number |
-| `ln.invoices.watch(number, timeout=)` | SSE stream for settlement/expiry |
-
-### Payments
-
-| Method | Description |
-| --- | --- |
-| `ln.payments.create(target=, amount=, ...)` | Send sats to a Lightning address or BOLT11 invoice |
-| `ln.payments.list(limit=, after=)` | List payments |
-| `ln.payments.get(number)` | Get payment by number |
-
-### Addresses
-
-| Method | Description |
-| --- | --- |
-| `ln.addresses.create(address=)` | Create a random or vanity Lightning address |
-| `ln.addresses.list()` | List all addresses |
-| `ln.addresses.delete(address)` | Delete an address |
-| `ln.addresses.transfer(address, target_wallet_key=)` | Transfer address to another wallet |
-
-### Transactions
-
-| Method | Description |
-| --- | --- |
-| `ln.transactions.list(limit=, after=)` | List credit and debit transactions |
-
-### Webhooks
-
-| Method | Description |
-| --- | --- |
-| `ln.webhooks.create(url=)` | Register a webhook endpoint (max 10) |
-| `ln.webhooks.list()` | List all webhooks |
-| `ln.webhooks.delete(webhook_id)` | Delete a webhook |
-
-### API Keys
-
-| Method | Description |
-| --- | --- |
-| `ln.keys.rotate(slot)` | Rotate a key (0 = primary, 1 = secondary) |
-
-### L402
-
-| Method | Description |
-| --- | --- |
-| `ln.l402.create_challenge(amount=, ...)` | Create an L402 challenge (invoice + macaroon) |
-| `ln.l402.verify(authorization=)` | Verify an L402 token (stateless) |
-| `ln.l402.pay(www_authenticate=, ...)` | Pay an L402 challenge, get Authorization header |
-
-### Backup & Restore
-
-| Method | Description |
-| --- | --- |
-| `ln.backup.recovery()` | Generate 12-word BIP-39 recovery passphrase |
-| `ln.backup.passkey_begin()` | Start passkey backup (WebAuthn) |
-| `ln.backup.passkey_complete(session_id=, attestation=)` | Complete passkey backup |
-| `ln.restore.recovery(passphrase=)` | Restore wallet with recovery passphrase |
-| `ln.restore.passkey_begin()` | Start passkey restore (WebAuthn) |
-| `ln.restore.passkey_complete(session_id=, assertion=)` | Complete passkey restore |
-
----
+- **Zero extra dependencies** — only `httpx`
+- **Wallet-scoped API** — `ln.wallet(id)` returns a typed scope with all sub-resources
+- **Sync + async** — `LnBot` and `AsyncLnBot` with identical APIs
+- **Typed exceptions** — `BadRequestError`, `NotFoundError`, `ConflictError`, `UnauthorizedError`, `ForbiddenError`
+- **SSE support** — `watch()` returns an iterator/async iterator for real-time events
+- **Dataclass responses** — all responses are frozen dataclasses
 
 ## Requirements
 
@@ -241,6 +217,7 @@ print(v.valid)
 ## Other SDKs
 
 - [TypeScript SDK](https://github.com/lnbotdev/typescript-sdk) · [npm](https://www.npmjs.com/package/@lnbot/sdk)
+- [C# SDK](https://github.com/lnbotdev/csharp-sdk) · [NuGet](https://www.nuget.org/packages/LnBot)
 - [Go SDK](https://github.com/lnbotdev/go-sdk) · [pkg.go.dev](https://pkg.go.dev/github.com/lnbotdev/go-sdk)
 - [Rust SDK](https://github.com/lnbotdev/rust-sdk) · [crates.io](https://crates.io/crates/lnbot) · [docs.rs](https://docs.rs/lnbot)
 

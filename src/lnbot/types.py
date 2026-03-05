@@ -12,6 +12,23 @@ TransactionType = Literal["credit", "debit"]
 
 
 # ---------------------------------------------------------------------------
+# Account
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RegisterResponse:
+    user_id: str
+    primary_key: str
+    secondary_key: str
+    recovery_passphrase: str
+
+
+@dataclass(frozen=True)
+class MeResponse:
+    wallet_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Wallet
 # ---------------------------------------------------------------------------
 
@@ -27,11 +44,32 @@ class WalletResponse:
 @dataclass(frozen=True)
 class CreateWalletResponse:
     wallet_id: str
-    primary_key: str
-    secondary_key: str
     name: str
     address: str
-    recovery_passphrase: str
+
+
+@dataclass(frozen=True)
+class WalletListItem:
+    wallet_id: str
+    name: str
+    created_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Wallet Key
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class WalletKeyResponse:
+    key: str
+    hint: str
+
+
+@dataclass(frozen=True)
+class WalletKeyInfoResponse:
+    hint: str
+    created_at: str | None = None
+    last_used_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +131,15 @@ class PaymentResponse:
     failure_reason: str | None = None
     created_at: str | None = None
     settled_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolveTargetResponse:
+    type: str
+    min: int | None = None
+    max: int | None = None
+    fixed: bool | None = None
+    amount: int | None = None
 
 
 # ---------------------------------------------------------------------------

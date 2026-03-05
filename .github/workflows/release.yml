@@ -20,7 +20,7 @@ jobs:
           python-version: "3.13"
 
       - run: pip install -e ".[test]"
-      - run: pytest tests/ -v
+      - run: pytest tests/ -v -m "not integration"
 
       - run: pip install build
       - run: python -m build

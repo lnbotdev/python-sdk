@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lnbot"
-version = "0.5.0"
+version = "1.0.0"
 description = "Official Python SDK for LnBot — Bitcoin for AI Agents. Send and receive sats over Lightning with a few lines of code."
 readme = "README.md"
 license = "MIT"
@@ -57,6 +57,7 @@ Issues = "https://github.com/lnbotdev/python-sdk/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: integration tests that hit the live API"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lnbot"]

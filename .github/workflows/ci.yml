@@ -19,4 +19,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - run: pip install -e ".[test]"
-      - run: pytest tests/ -v
+      - run: pytest tests/ -v -m "not integration"
