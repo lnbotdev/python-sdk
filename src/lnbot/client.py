@@ -218,7 +218,11 @@ class PaymentsResource:
         self._prefix = prefix
 
     def create(self, *, target: str, amount: int | None = None, idempotency_key: str | None = None, max_fee: int | None = None, reference: str | None = None) -> PaymentResponse:
-        """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice)."""
+        """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice).
+
+        *max_fee* caps the network fee (Spark's fee plus Lightning routing). Leave it unset to use
+        the server default: 1% of the amount, minimum 20 sats.
+        """
         body = to_camel({"target": target, "amount": amount, "idempotency_key": idempotency_key, "max_fee": max_fee, "reference": reference})
         return parse(PaymentResponse, self._c._post(f"{self._prefix}/payments", body))
 
@@ -230,9 +234,13 @@ class PaymentsResource:
         """Get a single payment by its number or payment hash."""
         return parse(PaymentResponse, self._c._get(f"{self._prefix}/payments/{quote(str(number_or_hash), safe='')}"))
 
-    def resolve(self, *, target: str) -> ResolveTargetResponse:
-        """Resolve a payment target and return info about the destination."""
-        return parse(ResolveTargetResponse, self._c._get(f"{self._prefix}/payments/resolve", params={"target": target}))
+    def resolve(self, *, target: str, amount: int | None = None) -> ResolveTargetResponse:
+        """Resolve a payment target and price the payment without sending anything.
+
+        Pass *amount* to price a Lightning address or LNURL (for a BOLT11 invoice it must match the
+        invoice amount). Without it, a Lightning address or LNURL returns ``max_sendable``.
+        """
+        return parse(ResolveTargetResponse, self._c._get(f"{self._prefix}/payments/resolve", params=_qs({"target": target, "amount": amount})))
 
     def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> Iterator[PaymentEvent]:
         """Stream SSE events until the payment settles or fails."""
@@ -395,7 +403,10 @@ class L402Resource:
         return parse(VerifyL402Response, self._c._post(f"{self._prefix}/l402/verify", {"authorization": authorization}))
 
     def pay(self, *, www_authenticate: str, max_fee: int | None = None, reference: str | None = None, wait: bool | None = None, timeout: int | None = None) -> L402PayResponse:
-        """Pay an L402 challenge and get a ready-to-use Authorization header."""
+        """Pay an L402 challenge and get a ready-to-use Authorization header.
+
+        *max_fee* caps the network fee, as for payments. Leave it unset to use the server default.
+        """
         body = to_camel({"www_authenticate": www_authenticate, "max_fee": max_fee, "reference": reference, "wait": wait, "timeout": timeout})
         return parse(L402PayResponse, self._c._post(f"{self._prefix}/l402/pay", body))
 
@@ -626,8 +637,8 @@ class AsyncPaymentsResource:
     async def get(self, number_or_hash: int | str) -> PaymentResponse:
         return parse(PaymentResponse, await self._c._get(f"{self._prefix}/payments/{quote(str(number_or_hash), safe='')}"))
 
-    async def resolve(self, *, target: str) -> ResolveTargetResponse:
-        return parse(ResolveTargetResponse, await self._c._get(f"{self._prefix}/payments/resolve", params={"target": target}))
+    async def resolve(self, *, target: str, amount: int | None = None) -> ResolveTargetResponse:
+        return parse(ResolveTargetResponse, await self._c._get(f"{self._prefix}/payments/resolve", params=_qs({"target": target, "amount": amount})))
 
     async def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> AsyncIterator[PaymentEvent]:
         params = _qs({"timeout": timeout})

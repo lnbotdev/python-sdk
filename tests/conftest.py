@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from lnbot import LnBot
+from lnbot import AsyncLnBot, LnBot
 
 
 class CapturedRequest:
@@ -54,6 +54,28 @@ def create_client(
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     return LnBot(api_key="key_test", http_client=client), captured
+
+
+def create_async_client(
+    status: int = 200,
+    json_body: Any = None,
+    *,
+    content_type: str = "application/json",
+) -> tuple[AsyncLnBot, CapturedRequest]:
+    """Create an AsyncLnBot client backed by a mock transport."""
+    captured = CapturedRequest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.method = request.method
+        captured.url = request.url
+        captured.headers = request.headers
+        captured.content = request.content
+        body = json.dumps(json_body).encode() if json_body is not None else b""
+        return httpx.Response(status, content=body, headers={"content-type": content_type})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    return AsyncLnBot(api_key="key_test", http_client=client), captured
 
 
 def create_sse_client(sse_text: str) -> tuple[LnBot, CapturedRequest]:

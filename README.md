@@ -69,11 +69,48 @@ for event in w.invoices.watch(invoice.number):
         break
 ```
 
+An `expired` invoice is not always final: one paid just before it expired can turn `settled` a moment later. Before giving up, check again with `w.invoices.get(invoice.number)`, or keep listening for `invoice.settled` on `w.events.stream()` or a webhook.
+
 ### Send sats
 
 ```python
-w.payments.create(target="alice@ln.bot", amount=500)
+payment = w.payments.create(target="alice@ln.bot", amount=500)
 ```
+
+Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sats), which covers the network fee (Spark's 0.25% plus Lightning routing) for most payments. Only the fee estimate plus a small buffer is held while the payment is in flight. On success the wallet is debited `amount + actual_fee + service_fee`.
+
+If the fee estimate is above the limit, `create` raises `BadRequestError` (for example `Network fee estimate (X sats) exceeds maxFee (Y sats).`). Pass a higher `max_fee` only if you accept that fee.
+
+A payment can stay `pending` for a while: it is retried automatically until it settles or fails. It fails if the invoice expires first, and after 24 hours at most. `watch()` closes after its timeout, so if it ends without an event, check again with `w.payments.get(payment.number)`. A failed payment carries the reason in `failure_reason`.
+
+### Price a payment before sending
+
+```python
+quote = w.payments.resolve(target="alice@example.com", amount=500)
+print(quote.network_fee_estimate, quote.service_fee, quote.total)
+
+if quote.fee_warning:
+    print(quote.fee_warning)  # sending without max_fee would be rejected
+```
+
+For a BOLT11 invoice, leave out `amount` (or pass the invoice amount). `quote.internal` is `True` when the recipient is a wallet on ln.bot, which makes the transfer free.
+
+Pricing a Lightning address or LNURL fetches an invoice from the recipient, so it is slower. Call it once the amount is settled, not on every keystroke.
+
+`resolve` raises `BadRequestError` when the target can't be paid, for example `Recipient not found.` for an unknown ln.bot address or `Cannot transfer to yourself.` for your own. When the amount is outside the recipient's range, the JSON in the error's `body` also carries `min` and `max`.
+
+### Send everything
+
+Resolve a Lightning address or LNURL without an amount to get `max_sendable`, the most this wallet can send there now after fees:
+
+```python
+quote = w.payments.resolve(target="alice@example.com")
+
+if quote.max_sendable:
+    w.payments.create(target="alice@example.com", amount=quote.max_sendable)
+```
+
+Don't pass `max_fee` here: `max_sendable` assumes the default. It is `0` when the balance can't cover the recipient's minimum.
 
 ### Check balance
 
@@ -183,8 +220,9 @@ w = ln.wallet("wal_...")
 # Create a challenge (server side)
 challenge = w.l402.create_challenge(amount=100, description="API access", expiry_seconds=3600)
 
-# Pay the challenge (client side)
+# Pay the challenge (client side). max_fee works as for payments: leave it unset for the default.
 result = w.l402.pay(www_authenticate=challenge.www_authenticate)
+print(result.fee)  # network fee charged
 
 # Verify a token (server side, stateless)
 v = w.l402.verify(authorization=result.authorization)

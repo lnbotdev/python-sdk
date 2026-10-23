@@ -118,13 +118,18 @@ class AddressInvoiceResponse:
 
 @dataclass(frozen=True)
 class PaymentResponse:
+    """A payment. On success the wallet is debited ``amount + actual_fee + service_fee``."""
+
     number: int
     status: PaymentStatus
     amount: int
     max_fee: int
+    """Network fee reserved for this payment in sats (fee estimate plus a buffer). The unused part is released at settlement."""
     service_fee: int
+    """Service fee in sats: 0.25%, minimum 1 sat. 0 for internal transfers."""
     address: str
     actual_fee: int | None = None
+    """Network fee actually charged in sats (Spark's fee plus Lightning routing). None until settled."""
     reference: str | None = None
     preimage: str | None = None
     tx_number: int | None = None
@@ -135,11 +140,32 @@ class PaymentResponse:
 
 @dataclass(frozen=True)
 class ResolveTargetResponse:
+    """A resolved payment target and what paying it would cost. Nothing is sent or held."""
+
     type: str
+    """Target type: ``"lightning_address"``, ``"lnurl"`` or ``"bolt11"``."""
     min: int | None = None
+    """Minimum accepted amount in sats. None for BOLT11 invoices."""
     max: int | None = None
+    """Maximum accepted amount in sats. None for BOLT11 invoices."""
     fixed: bool | None = None
+    """True if the recipient expects a fixed amount."""
     amount: int | None = None
+    """The amount priced: the invoice amount for BOLT11, otherwise the amount passed. None when no amount."""
+    internal: bool = False
+    """True if the recipient is a wallet on ln.bot: a free internal transfer."""
+    network_fee_estimate: int | None = None
+    """Estimated network fee in sats (Spark's 0.25% plus routing). None without an amount or if no estimate is available. 0 if internal."""
+    service_fee: int | None = None
+    """Service fee in sats: 0.25%, minimum 1 sat. 0 if internal. None without an amount."""
+    max_fee: int | None = None
+    """Network fee that would be held with the default ``max_fee``. None without an amount, or when ``fee_warning`` is set."""
+    total: int | None = None
+    """``amount + network_fee_estimate + service_fee``. None without an amount."""
+    max_sendable: int | None = None
+    """For a Lightning address or LNURL resolved without an amount: the most this wallet can send there now, after fees. 0 if it can't cover the recipient's minimum. None otherwise."""
+    fee_warning: str | None = None
+    """Set when sending without ``max_fee`` would be rejected because the fee is unusually high."""
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +295,7 @@ class L402PayResponse:
     authorization: str | None = None
     preimage: str | None = None
     fee: int | None = None
+    """Network fee actually charged in sats (Spark's fee plus Lightning routing). None until settled."""
 
 
 # ---------------------------------------------------------------------------

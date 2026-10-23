@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from conftest import create_client
+import asyncio
+
+from conftest import create_async_client, create_client
 
 
 # ---------------------------------------------------------------------------
@@ -177,17 +179,48 @@ class TestPublicInvoices:
 # ---------------------------------------------------------------------------
 
 
+RESOLVE_BOLT11 = {
+    "type": "bolt11", "min": None, "max": None, "fixed": True, "amount": 250000,
+    "internal": False, "networkFeeEstimate": 700, "serviceFee": 625, "maxFee": 805,
+    "total": 251325, "maxSendable": None, "feeWarning": None,
+}
+
+RESOLVE_ADDRESS_NO_AMOUNT = {
+    "type": "lightning_address", "min": 1, "max": 100000, "fixed": False, "amount": None,
+    "internal": False, "networkFeeEstimate": None, "serviceFee": None, "maxFee": None,
+    "total": None, "maxSendable": 49650, "feeWarning": None,
+}
+
+
 class TestPayments:
     def test_create(self):
         ln, cap = create_client(json_body={
-            "number": 1, "status": "pending", "amount": 50, "maxFee": 10,
-            "serviceFee": 0, "address": "user@ln.bot",
+            "number": 1, "status": "pending", "amount": 5000, "maxFee": 17, "serviceFee": 13,
+            "actualFee": None, "address": "user@example.com", "reference": None, "preimage": None,
+            "txNumber": None, "failureReason": None, "createdAt": "2026-10-01T00:00:00Z", "settledAt": None,
         })
-        p = ln.wallet("wal_1").payments.create(target="user@ln.bot", amount=50)
+        p = ln.wallet("wal_1").payments.create(target="user@example.com", amount=5000)
         assert cap.method == "POST"
         assert cap.path == "/v1/wallets/wal_1/payments"
         assert p.number == 1
-        assert p.address == "user@ln.bot"
+        assert p.address == "user@example.com"
+        assert p.max_fee == 17
+        assert p.service_fee == 13
+        assert p.actual_fee is None
+
+    def test_create_omits_max_fee_by_default(self):
+        ln, cap = create_client(json_body={
+            "number": 1, "status": "pending", "amount": 5000, "maxFee": 17, "serviceFee": 13, "address": "user@example.com",
+        })
+        ln.wallet("wal_1").payments.create(target="user@example.com", amount=5000)
+        assert cap.json_body == {"target": "user@example.com", "amount": 5000}
+
+    def test_create_sends_max_fee(self):
+        ln, cap = create_client(json_body={
+            "number": 1, "status": "pending", "amount": 5000, "maxFee": 17, "serviceFee": 13, "address": "user@example.com",
+        })
+        ln.wallet("wal_1").payments.create(target="user@example.com", amount=5000, max_fee=100)
+        assert cap.json_body["maxFee"] == 100
 
     def test_list(self):
         ln, cap = create_client(json_body=[
@@ -214,12 +247,98 @@ class TestPayments:
         assert cap.path == "/v1/wallets/wal_1/payments/hash456"
 
     def test_resolve(self):
-        ln, cap = create_client(json_body={"type": "lightning_address", "min": 1, "max": 100000, "fixed": False})
+        ln, cap = create_client(json_body=RESOLVE_ADDRESS_NO_AMOUNT)
         r = ln.wallet("wal_1").payments.resolve(target="user@ln.bot")
         assert cap.method == "GET"
         assert cap.path == "/v1/wallets/wal_1/payments/resolve"
         assert "target=user%40ln.bot" in cap.query
         assert r.type == "lightning_address"
+
+    def test_resolve_omits_amount_by_default(self):
+        ln, cap = create_client(json_body=RESOLVE_ADDRESS_NO_AMOUNT)
+        ln.wallet("wal_1").payments.resolve(target="user@example.com")
+        assert cap.query == "target=user%40example.com"
+
+    def test_resolve_sends_amount(self):
+        ln, cap = create_client(json_body=RESOLVE_BOLT11)
+        ln.wallet("wal_1").payments.resolve(target="user@example.com", amount=250000)
+        assert cap.path == "/v1/wallets/wal_1/payments/resolve"
+        assert "target=user%40example.com" in cap.query
+        assert "amount=250000" in cap.query
+
+    def test_resolve_parses_all_fields(self):
+        ln, _ = create_client(json_body=RESOLVE_BOLT11)
+        r = ln.wallet("wal_1").payments.resolve(target="lnbc2500u1...")
+        assert r.type == "bolt11"
+        assert r.min is None
+        assert r.max is None
+        assert r.fixed is True
+        assert r.amount == 250000
+        assert r.internal is False
+        assert r.network_fee_estimate == 700
+        assert r.service_fee == 625
+        assert r.max_fee == 805
+        assert r.total == 251325
+        assert r.max_sendable is None
+        assert r.fee_warning is None
+
+    def test_resolve_address_without_amount_returns_max_sendable(self):
+        ln, cap = create_client(json_body=RESOLVE_ADDRESS_NO_AMOUNT)
+        r = ln.wallet("wal_1").payments.resolve(target="user@example.com")
+        assert "amount" not in cap.query
+        assert r.type == "lightning_address"
+        assert r.min == 1
+        assert r.max == 100000
+        assert r.amount is None
+        assert r.max_sendable == 49650
+        assert r.network_fee_estimate is None
+        assert r.service_fee is None
+        assert r.max_fee is None
+        assert r.total is None
+
+    def test_resolve_parses_internal_and_fee_warning(self):
+        ln, _ = create_client(json_body={
+            "type": "lightning_address", "min": 1, "max": 100000, "fixed": False, "amount": 1000,
+            "internal": True, "networkFeeEstimate": 0, "serviceFee": 0, "maxFee": None,
+            "total": 1000, "maxSendable": None, "feeWarning": "Network fee is unusually high.",
+        })
+        r = ln.wallet("wal_1").payments.resolve(target="bob@ln.bot", amount=1000)
+        assert r.internal is True
+        assert r.network_fee_estimate == 0
+        assert r.service_fee == 0
+        assert r.total == 1000
+        assert r.fee_warning == "Network fee is unusually high."
+
+    def test_resolve_parses_legacy_response(self):
+        ln, _ = create_client(json_body={"type": "lightning_address", "min": 1, "max": 100000, "fixed": False})
+        r = ln.wallet("wal_1").payments.resolve(target="user@ln.bot")
+        assert r.internal is False
+        assert r.max_sendable is None
+
+
+class TestAsyncPayments:
+    def test_resolve_omits_amount_by_default(self):
+        ln, cap = create_async_client(json_body=RESOLVE_ADDRESS_NO_AMOUNT)
+        r = asyncio.run(ln.wallet("wal_1").payments.resolve(target="user@example.com"))
+        assert cap.method == "GET"
+        assert cap.path == "/v1/wallets/wal_1/payments/resolve"
+        assert cap.query == "target=user%40example.com"
+        assert r.max_sendable == 49650
+
+    def test_resolve_sends_amount(self):
+        ln, cap = create_async_client(json_body=RESOLVE_BOLT11)
+        r = asyncio.run(ln.wallet("wal_1").payments.resolve(target="user@example.com", amount=250000))
+        assert "target=user%40example.com" in cap.query
+        assert "amount=250000" in cap.query
+        assert r.network_fee_estimate == 700
+        assert r.total == 251325
+
+    def test_create_omits_max_fee_by_default(self):
+        ln, cap = create_async_client(json_body={
+            "number": 1, "status": "pending", "amount": 5000, "maxFee": 17, "serviceFee": 13, "address": "user@example.com",
+        })
+        asyncio.run(ln.wallet("wal_1").payments.create(target="user@example.com", amount=5000))
+        assert cap.json_body == {"target": "user@example.com", "amount": 5000}
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +515,18 @@ class TestL402:
             "authorization": "L402 token:preimage", "paymentHash": "hash_1",
             "preimage": "pre_1", "amount": 100, "fee": 1, "paymentNumber": 1, "status": "settled",
         })
-        resp = ln.wallet("wal_1").l402.pay(www_authenticate="L402 mac:inv", max_fee=10)
+        resp = ln.wallet("wal_1").l402.pay(www_authenticate="L402 mac:inv")
         assert cap.path == "/v1/wallets/wal_1/l402/pay"
         assert resp.status == "settled"
         assert resp.amount == 100
+        assert resp.fee == 1
+        assert "maxFee" not in cap.json_body
+
+    def test_pay_sends_max_fee(self):
+        ln, cap = create_client(json_body={
+            "authorization": None, "paymentHash": "hash_1", "preimage": None,
+            "amount": 100, "fee": None, "paymentNumber": 1, "status": "pending",
+        })
+        resp = ln.wallet("wal_1").l402.pay(www_authenticate="L402 mac:inv", max_fee=50, wait=False)
+        assert cap.json_body["maxFee"] == 50
+        assert resp.fee is None
