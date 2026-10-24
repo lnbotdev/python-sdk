@@ -96,3 +96,23 @@ def create_sse_client(sse_text: str) -> tuple[LnBot, CapturedRequest]:
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     return LnBot(api_key="key_test", http_client=client), captured
+
+
+def create_async_sse_client(sse_text: str) -> tuple[AsyncLnBot, CapturedRequest]:
+    """Create an AsyncLnBot client that returns SSE content for streaming endpoints."""
+    captured = CapturedRequest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.method = request.method
+        captured.url = request.url
+        captured.headers = request.headers
+        captured.content = request.content
+        return httpx.Response(
+            200,
+            content=sse_text.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    return AsyncLnBot(api_key="key_test", http_client=client), captured

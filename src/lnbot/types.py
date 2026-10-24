@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass
 from typing import Any, Literal, TypeVar
 
 T = TypeVar("T")
@@ -304,13 +304,25 @@ class L402PayResponse:
 
 @dataclass(frozen=True)
 class InvoiceEvent:
-    event: Literal["settled", "expired"]
+    """An event from ``invoices.watch()``.
+
+    ``event`` is ``"settled"`` or ``"expired"``, or ``"timeout"`` when the wait ran out: ``data`` is the
+    current state; read again or watch again.
+    """
+
+    event: Literal["settled", "expired", "timeout"]
     data: InvoiceResponse
 
 
 @dataclass(frozen=True)
 class PaymentEvent:
-    event: Literal["settled", "failed"]
+    """An event from ``payments.watch()``.
+
+    ``event`` is ``"settled"`` or ``"failed"``, or ``"timeout"`` when the wait ran out: ``data`` is the
+    current state; read again or watch again.
+    """
+
+    event: Literal["settled", "failed", "timeout"]
     data: PaymentResponse
 
 
@@ -325,6 +337,13 @@ WalletEventType = Literal[
 
 @dataclass(frozen=True)
 class WalletEvent:
+    """An event from ``events.stream()``.
+
+    ``data`` is the invoice or payment as a dict with snake_case keys, named like the fields of
+    ``InvoiceResponse`` and ``PaymentResponse``. Keys a partial payload leaves out (for example
+    ``actual_fee`` on ``payment.created``) are absent.
+    """
+
     event: WalletEventType
     created_at: str
     data: dict[str, Any]
@@ -355,3 +374,31 @@ def parse(cls: type[T], data: dict[str, Any]) -> T:
     mapped = from_camel(data)
     fields = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
     return cls(**{k: v for k, v in mapped.items() if k in fields})
+
+
+# ---------------------------------------------------------------------------
+# SSE payload decoding
+# ---------------------------------------------------------------------------
+
+def snake_keys(value: Any) -> Any:
+    """Convert object keys to snake_case, recursively.
+
+    Event payloads use snake_case on the wire. Keys already in snake_case pass through unchanged and
+    camelCase keys are converted, so both spellings decode the same way.
+    """
+    if isinstance(value, dict):
+        return {_to_snake(k): snake_keys(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [snake_keys(v) for v in value]
+    return value
+
+
+def parse_event_data(cls: type[T], data: dict[str, Any]) -> T:
+    """Decode an SSE payload into *cls*. Fields missing from the payload become None instead of raising."""
+    mapped = snake_keys(data)
+    fields = cls.__dataclass_fields__  # type: ignore[attr-defined]
+    kwargs = {k: v for k, v in mapped.items() if k in fields}
+    for name, f in fields.items():
+        if name not in kwargs and f.default is MISSING and f.default_factory is MISSING:
+            kwargs[name] = None
+    return cls(**kwargs)

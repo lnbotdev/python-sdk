@@ -48,6 +48,8 @@ from .types import (
     WalletResponse,
     WebhookResponse,
     parse,
+    parse_event_data,
+    snake_keys,
     to_camel,
 )
 
@@ -97,6 +99,15 @@ def _sse_headers(api_key: str | None) -> dict[str, str]:
     if api_key:
         h["Authorization"] = f"Bearer {api_key}"
     return h
+
+
+def _sse_json(raw: str) -> dict[str, Any] | None:
+    """Decode one SSE ``data:`` payload, or ``None`` when it isn't a JSON object (the stream skips it, as before)."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +201,11 @@ class InvoicesResource:
         return parse(InvoiceResponse, self._c._get(f"{self._prefix}/invoices/{quote(str(number_or_hash), safe='')}"))
 
     def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> Iterator[InvoiceEvent]:
-        """Stream SSE events until the invoice is settled or expires."""
+        """Stream SSE events until the invoice is settled or expires.
+
+        If the wait runs out first, the last event is ``timeout``: ``data`` is the current state; read
+        again or watch again.
+        """
         params = _qs({"timeout": timeout})
         url = f"{self._c._base_url}{self._prefix}/invoices/{quote(str(number_or_hash), safe='')}/events"
         with self._c._http.stream("GET", url, params=params, headers=_sse_headers(self._c._api_key)) as resp:
@@ -202,11 +217,9 @@ class InvoicesResource:
                 elif line.startswith("data:"):
                     raw = line[5:].strip()
                     if raw and event_type:
-                        try:
-                            data = parse(InvoiceResponse, json.loads(raw))
-                            yield InvoiceEvent(event=event_type, data=data)  # type: ignore[arg-type]
-                        except (json.JSONDecodeError, TypeError, KeyError):
-                            pass
+                        obj = _sse_json(raw)
+                        if obj is not None:
+                            yield InvoiceEvent(event=event_type, data=parse_event_data(InvoiceResponse, obj))  # type: ignore[arg-type]
                         event_type = ""
 
 
@@ -243,7 +256,11 @@ class PaymentsResource:
         return parse(ResolveTargetResponse, self._c._get(f"{self._prefix}/payments/resolve", params=_qs({"target": target, "amount": amount})))
 
     def watch(self, number_or_hash: int | str, *, timeout: int | None = None) -> Iterator[PaymentEvent]:
-        """Stream SSE events until the payment settles or fails."""
+        """Stream SSE events until the payment settles or fails.
+
+        If the wait runs out first, the last event is ``timeout``: ``data`` is the current state; read
+        again or watch again.
+        """
         params = _qs({"timeout": timeout})
         url = f"{self._c._base_url}{self._prefix}/payments/{quote(str(number_or_hash), safe='')}/events"
         with self._c._http.stream("GET", url, params=params, headers=_sse_headers(self._c._api_key)) as resp:
@@ -255,11 +272,9 @@ class PaymentsResource:
                 elif line.startswith("data:"):
                     raw = line[5:].strip()
                     if raw and event_type:
-                        try:
-                            data = parse(PaymentResponse, json.loads(raw))
-                            yield PaymentEvent(event=event_type, data=data)  # type: ignore[arg-type]
-                        except (json.JSONDecodeError, TypeError, KeyError):
-                            pass
+                        obj = _sse_json(raw)
+                        if obj is not None:
+                            yield PaymentEvent(event=event_type, data=parse_event_data(PaymentResponse, obj))  # type: ignore[arg-type]
                         event_type = ""
 
 
@@ -336,16 +351,14 @@ class EventsResource:
             for line in resp.iter_lines():
                 if line.startswith("data:"):
                     raw = line[5:].strip()
-                    if raw:
-                        try:
-                            data = json.loads(raw)
-                            yield WalletEvent(
-                                event=data.get("event", ""),
-                                created_at=data.get("createdAt", ""),
-                                data=data.get("data", {}),
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            pass
+                    obj = _sse_json(raw) if raw else None
+                    if obj is not None:
+                        data = snake_keys(obj)
+                        yield WalletEvent(
+                            event=data.get("event", ""),
+                            created_at=data.get("created_at", ""),
+                            data=data.get("data", {}),
+                        )
 
 
 class BackupResource:
@@ -612,11 +625,9 @@ class AsyncInvoicesResource:
                 elif line.startswith("data:"):
                     raw = line[5:].strip()
                     if raw and event_type:
-                        try:
-                            data = parse(InvoiceResponse, json.loads(raw))
-                            yield InvoiceEvent(event=event_type, data=data)  # type: ignore[arg-type]
-                        except (json.JSONDecodeError, TypeError, KeyError):
-                            pass
+                        obj = _sse_json(raw)
+                        if obj is not None:
+                            yield InvoiceEvent(event=event_type, data=parse_event_data(InvoiceResponse, obj))  # type: ignore[arg-type]
                         event_type = ""
 
 
@@ -652,11 +663,9 @@ class AsyncPaymentsResource:
                 elif line.startswith("data:"):
                     raw = line[5:].strip()
                     if raw and event_type:
-                        try:
-                            data = parse(PaymentResponse, json.loads(raw))
-                            yield PaymentEvent(event=event_type, data=data)  # type: ignore[arg-type]
-                        except (json.JSONDecodeError, TypeError, KeyError):
-                            pass
+                        obj = _sse_json(raw)
+                        if obj is not None:
+                            yield PaymentEvent(event=event_type, data=parse_event_data(PaymentResponse, obj))  # type: ignore[arg-type]
                         event_type = ""
 
 
@@ -724,16 +733,14 @@ class AsyncEventsResource:
             async for line in resp.aiter_lines():
                 if line.startswith("data:"):
                     raw = line[5:].strip()
-                    if raw:
-                        try:
-                            data = json.loads(raw)
-                            yield WalletEvent(
-                                event=data.get("event", ""),
-                                created_at=data.get("createdAt", ""),
-                                data=data.get("data", {}),
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            pass
+                    obj = _sse_json(raw) if raw else None
+                    if obj is not None:
+                        data = snake_keys(obj)
+                        yield WalletEvent(
+                            event=data.get("event", ""),
+                            created_at=data.get("created_at", ""),
+                            data=data.get("data", {}),
+                        )
 
 
 class AsyncBackupResource:

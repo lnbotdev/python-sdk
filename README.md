@@ -71,6 +71,10 @@ for event in w.invoices.watch(invoice.number):
 
 An `expired` invoice is not always final: one paid just before it expired can turn `settled` a moment later. Before giving up, check again with `w.invoices.get(invoice.number)`, or keep listening for `invoice.settled` on `w.events.stream()` or a webhook.
 
+If the wait runs out first (`timeout=` seconds, 60 by default, 300 at most), the last event is `timeout`: `event.data` is the current state; read again or watch again.
+
+Event stream and webhook payloads use snake_case on the wire (`max_fee`, `created_at`). The SDK converts event payloads to the same field names as its REST types; a webhook handler reads the snake_case JSON as is.
+
 ### Send sats
 
 ```python
@@ -81,7 +85,7 @@ Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sa
 
 If the fee estimate is above the limit, `create` raises `BadRequestError` (for example `Network fee estimate (X sats) exceeds maxFee (Y sats).`). Pass a higher `max_fee` only if you accept that fee.
 
-A payment can stay `pending` for a while: it is retried automatically until it settles or fails. It fails if the invoice expires first, and after 24 hours at most. `watch()` closes after its timeout, so if it ends without an event, check again with `w.payments.get(payment.number)`. A failed payment carries the reason in `failure_reason`.
+A payment can stay `pending` for a while: it is retried automatically until it settles or fails. It fails if the invoice expires first, and after 24 hours at most. If `watch()` runs out of time first, it ends with a `timeout` event whose `data` is the current state: check again with `w.payments.get(payment.number)` or watch again. A failed payment carries the reason in `failure_reason`.
 
 ### Price a payment before sending
 
