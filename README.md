@@ -85,7 +85,7 @@ Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sa
 
 If the fee estimate is above the limit, `create` raises `BadRequestError` (for example `Network fee estimate (X sats) exceeds maxFee (Y sats).`). Pass a higher `max_fee` only if you accept that fee.
 
-A payment can stay `pending` for a while: it is retried automatically until it settles or fails. It fails if the invoice expires first, and after 24 hours at most. If `watch()` runs out of time first, it ends with a `timeout` event whose `data` is the current state: check again with `w.payments.get(payment.number)` or watch again. A failed payment carries the reason in `failure_reason`.
+A payment that can't be sent fails quickly, and its funds are released at once: within about half a minute if the Lightning service refuses it, or after 10 minutes of automatic retries for a temporary problem (`stage` `"retrying"`, until `retry_until`). If its invoice expires first, it fails then, with `Invoice expired before it could be paid.` A payment stays `processing` longer only when its funds are already on the Lightning network: it settles or fails as soon as the network does, usually within seconds, and is never refunded while it could still be paid. If `watch()` runs out of time first, it ends with a `timeout` event whose `data` is the current state: check again with `w.payments.get(payment.number)` or watch again. A failed payment carries the reason in `failure_reason`: show it as is, and when it ends in "Please try again.", sending the payment again later can work.
 
 ### Payment stages
 
