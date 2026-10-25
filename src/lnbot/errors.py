@@ -50,6 +50,16 @@ class ConflictError(LnBotError):
         super().__init__(_extract_message(body, "Conflict"), 409, body)
 
 
+class TooManyRequestsError(LnBotError):
+    """Raised for 429 Too Many Requests responses.
+
+    The public routes, such as ``status()`` and ``status_history()``, allow 10 requests a minute per IP.
+    """
+
+    def __init__(self, body: str) -> None:
+        super().__init__(_extract_message(body, "Too Many Requests"), 429, body)
+
+
 def _extract_message(body: str, fallback: str) -> str:
     """Try to pull a human-readable message from a JSON error body."""
     try:

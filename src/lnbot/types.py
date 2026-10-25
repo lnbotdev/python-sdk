@@ -129,13 +129,47 @@ class PaymentResponse:
     """Service fee in sats: 0.25%, minimum 1 sat. 0 for internal transfers."""
     address: str
     actual_fee: int | None = None
-    """Network fee actually charged in sats (Spark's fee plus Lightning routing). None until settled."""
+    """Network fee actually charged in sats (0.25% plus Lightning routing). None until settled."""
     reference: str | None = None
     preimage: str | None = None
     tx_number: int | None = None
     failure_reason: str | None = None
     created_at: str | None = None
     settled_at: str | None = None
+    stage: str | None = None
+    """Where the payment is, more precisely than ``status``: one of the ``PaymentStage`` values. More may be
+    added, so for a stage you don't know, go by ``status``. None from an API that doesn't send it."""
+    status_detail: str | None = None
+    """A sentence to show the user as is: what is happening while in progress, the ``failure_reason`` once
+    failed. None once settled."""
+    retry_until: str | None = None
+    """Only with stage ``"retrying"``: until when it is retried (ISO 8601). If it still can't be sent by then,
+    it fails within about a minute and the funds are released. None otherwise."""
+
+
+class PaymentStage:
+    """Known values of ``PaymentResponse.stage``.
+
+    ``stage`` is a plain string: more values may be added, so for one you don't know, go by ``status``.
+    A payment can go from ``processing`` back to ``pending`` (``retrying``): treat both as in progress.
+    """
+
+    QUEUED = "queued"
+    """With status ``pending``: waiting to be sent."""
+    RETRYING = "retrying"
+    """With status ``pending``: not sent yet, retried until ``retry_until``, then failed with the funds released."""
+    SENDING = "sending"
+    """With status ``pending`` or ``processing``: being sent (or transferred to another ln.bot wallet)."""
+    IN_FLIGHT = "in_flight"
+    """With status ``processing``: sent; the Lightning network is completing it, usually within seconds."""
+    CONFIRMING = "confirming"
+    """With status ``processing``: checking with the Lightning network whether it went out. The funds stay on hold."""
+    ON_HOLD = "on_hold"
+    """With status ``processing``: interrupted by an earlier version of the service and held until reviewed."""
+    SETTLED = "settled"
+    """With status ``settled``."""
+    FAILED = "failed"
+    """With status ``failed``: ``status_detail`` is the failure reason."""
 
 
 @dataclass(frozen=True)
@@ -155,7 +189,7 @@ class ResolveTargetResponse:
     internal: bool = False
     """True if the recipient is a wallet on ln.bot: a free internal transfer."""
     network_fee_estimate: int | None = None
-    """Estimated network fee in sats (Spark's 0.25% plus routing). None without an amount or if no estimate is available. 0 if internal."""
+    """Estimated network fee in sats (0.25% plus Lightning routing). None without an amount or if no estimate is available. 0 if internal."""
     service_fee: int | None = None
     """Service fee in sats: 0.25%, minimum 1 sat. 0 if internal. None without an amount."""
     max_fee: int | None = None
@@ -295,7 +329,278 @@ class L402PayResponse:
     authorization: str | None = None
     preimage: str | None = None
     fee: int | None = None
-    """Network fee actually charged in sats (Spark's fee plus Lightning routing). None until settled."""
+    """Network fee actually charged in sats (0.25% plus Lightning routing). None until settled."""
+
+
+# ---------------------------------------------------------------------------
+# Service status
+# ---------------------------------------------------------------------------
+
+class ServiceState:
+    """Known values of a service status, overall and per component.
+
+    Statuses are plain strings: more values may be added, so never fail on one you don't know.
+    """
+
+    OPERATIONAL = "operational"
+    DEGRADED = "degraded"
+    OUTAGE = "outage"
+    UNKNOWN = "unknown"
+    """Not measured for 5 minutes: the numbers are as old as ``updated_at``."""
+
+
+class NoticeLevel:
+    """Known values of ``StatusNotice.level``. More may be added."""
+
+    INFO = "info"
+    """No effect on the status."""
+    WARNING = "warning"
+    """The overall status is at least ``degraded``."""
+    OUTAGE = "outage"
+    """The overall status is ``outage``."""
+
+
+@dataclass(frozen=True)
+class StatusNotice:
+    """A message from the operators."""
+
+    level: str
+    """``"info"``, ``"warning"`` or ``"outage"`` (see ``NoticeLevel``). More may be added."""
+    message: str
+    """Up to 500 characters, to show as is."""
+    since: str | None = None
+    """When it was posted (ISO 8601)."""
+    until: str | None = None
+    """When it was taken down (ISO 8601). Always None from ``status()``; None in ``status_history()`` while it is still up."""
+
+
+@dataclass(frozen=True)
+class SendingComponent:
+    """Lightning payments out."""
+
+    status: str
+    """See ``ServiceState``."""
+    in_progress: int
+    """Payments being sent now."""
+    by_stage: dict[str, int]
+    """Those payments by stage (``"queued"``, ``"retrying"``, ``"in_flight"`` and so on; see ``PaymentStage``).
+    Stages with none are left out, so it can be empty. More stages may appear."""
+    sent_last_hour: int
+    """Payments sent in the last hour."""
+    failed_last_hour: int
+    """Payments that failed in the last hour, for any reason."""
+    service_failures_last_hour: int
+    """Of those, the ones the service caused. The rest were the invoice's or the route's fault."""
+    longest_wait_seconds: float | None = None
+    """How long the oldest payment in progress has waited. None when there is none."""
+    median_seconds: float | None = None
+    """Request-to-settlement time over the last hour, median. None when nothing was sent."""
+    p95_seconds: float | None = None
+    """Request-to-settlement time over the last hour, 95th percentile. None when nothing was sent."""
+
+
+@dataclass(frozen=True)
+class ReceivingComponent:
+    """Lightning payments in."""
+
+    status: str
+    """See ``ServiceState``."""
+    credited_last_hour: int
+    """Incoming payments credited in the last hour."""
+    credit_backlog: int | None = None
+    """Incoming payments waiting to be credited now. None when it could not be read."""
+
+
+@dataclass(frozen=True)
+class NodeComponent:
+    """The Lightning node the service runs on."""
+
+    status: str
+    """See ``ServiceState``."""
+    latency_ms: int | None = None
+    """How long the node took to answer, in milliseconds. None when it didn't answer."""
+
+
+@dataclass(frozen=True)
+class WebhooksComponent:
+    """Webhook delivery."""
+
+    status: str
+    """See ``ServiceState``."""
+    backlog: int | None = None
+    """Deliveries waiting to go out. None when it could not be read."""
+
+
+@dataclass(frozen=True)
+class StatusComponents:
+    """Each part of the service."""
+
+    sending: SendingComponent
+    receiving: ReceivingComponent
+    node: NodeComponent
+    webhooks: WebhooksComponent
+
+
+@dataclass(frozen=True)
+class ServiceStatusResponse:
+    """The service right now, from ``status()``. Measured about once a minute."""
+
+    status: str
+    """Overall: ``"operational"``, ``"degraded"``, ``"outage"`` or ``"unknown"`` (see ``ServiceState``). More may be added."""
+    components: StatusComponents
+    updated_at: str | None = None
+    """When it was measured (ISO 8601). None if it never was."""
+    notice: StatusNotice | None = None
+    """A message from the operators, or None."""
+
+
+@dataclass(frozen=True)
+class UptimeShare:
+    """Percent of the measured time a part was in each state. Each is None when nothing was measured."""
+
+    operational: float | None = None
+    degraded: float | None = None
+    outage: float | None = None
+
+
+@dataclass(frozen=True)
+class StatusUptime:
+    """Uptime over the whole range, overall and per part."""
+
+    overall: UptimeShare
+    sending: UptimeShare
+    receiving: UptimeShare
+    node: UptimeShare
+    webhooks: UptimeShare
+
+
+@dataclass(frozen=True)
+class SettleTimeCount:
+    """One entry of the settlement-time histogram."""
+
+    count: int
+    """Payments that settled within ``up_to_seconds`` (and above the previous entry's bound)."""
+    up_to_seconds: float | None = None
+    """The bound in seconds: 1, 2, 3, 5, 10, 20, 30, 60, 120, 300 or 600. None for the last entry, which holds anything slower."""
+
+
+@dataclass(frozen=True)
+class StatusSummary:
+    """The whole range at once."""
+
+    samples: int
+    """Measurements in the range, about one a minute."""
+    uptime: StatusUptime
+    sent: int
+    failed: int
+    """Failed for any reason."""
+    service_failures: int
+    """Of those, the ones the service caused."""
+    credited: int
+    """Incoming payments credited."""
+    settle_times: list[SettleTimeCount]
+    median_seconds: float | None = None
+    """Request-to-settlement time, median; approximate (from ``settle_times``). None when nothing was sent."""
+    p95_seconds: float | None = None
+    """Request-to-settlement time, 95th percentile; approximate. None when nothing was sent."""
+    avg_latency_ms: float | None = None
+    """The node's average response time, in milliseconds."""
+    max_latency_ms: int | None = None
+    """The node's slowest response, in milliseconds."""
+
+
+@dataclass(frozen=True)
+class StatusBucketState:
+    """How many of a bucket's measurements found ln.bot as a whole degraded or in an outage; the rest found it operational."""
+
+    degraded: int
+    outage: int
+
+
+@dataclass(frozen=True)
+class StatusBucketSending:
+    """Lightning payments out, during one bucket."""
+
+    degraded: int
+    outage: int
+    sent: int
+    failed: int
+    service_failures: int
+    median_seconds: float | None = None
+    p95_seconds: float | None = None
+    max_in_progress: int | None = None
+    """Most payments in progress at once."""
+    max_wait_seconds: float | None = None
+    """Longest wait of a payment in progress."""
+
+
+@dataclass(frozen=True)
+class StatusBucketReceiving:
+    """Lightning payments in, during one bucket."""
+
+    degraded: int
+    outage: int
+    credited: int
+    max_backlog: int | None = None
+    """Most incoming payments waiting to be credited at once."""
+
+
+@dataclass(frozen=True)
+class StatusBucketNode:
+    """The Lightning node, during one bucket."""
+
+    degraded: int
+    outage: int
+    avg_latency_ms: float | None = None
+    max_latency_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class StatusBucketWebhooks:
+    """Webhook delivery, during one bucket."""
+
+    degraded: int
+    outage: int
+    max_backlog: int | None = None
+    """Most deliveries waiting at once."""
+
+
+@dataclass(frozen=True)
+class StatusBucket:
+    """One bucket of ``ServiceStatusHistoryResponse.buckets``.
+
+    ``samples`` is how many measurements it holds, about one a minute. ``0`` means it wasn't measured: its
+    percentiles and gauges are None, and it is no data, neither up nor down. ``degraded`` and ``outage``
+    count measurements, so a part's uptime in the bucket is ``(samples - degraded - outage) / samples``.
+    """
+
+    at: str
+    """Start of the bucket (ISO 8601, aligned to UTC)."""
+    samples: int
+    overall: StatusBucketState
+    sending: StatusBucketSending
+    receiving: StatusBucketReceiving
+    node: StatusBucketNode
+    webhooks: StatusBucketWebhooks
+
+
+@dataclass(frozen=True)
+class ServiceStatusHistoryResponse:
+    """The service over time, from ``status_history()``."""
+
+    range: str
+    """``"24h"``, ``"7d"``, ``"30d"`` or ``"90d"``."""
+    bucket_seconds: int
+    """How long each bucket is: 300 (24h), 3600 (7d), 21600 (30d) or 86400 (90d)."""
+    from_: str
+    """Start of the first bucket (ISO 8601). ``from`` in the JSON."""
+    to: str
+    """End of the range: now (ISO 8601)."""
+    summary: StatusSummary
+    buckets: list[StatusBucket]
+    """Oldest first. Don't assume how many: the last one is still filling, so there is one more than a full range."""
+    notices: list[StatusNotice]
+    """The operators' notices that were up during the range, oldest first."""
 
 
 # ---------------------------------------------------------------------------
@@ -402,3 +707,64 @@ def parse_event_data(cls: type[T], data: dict[str, Any]) -> T:
         if name not in kwargs and f.default is MISSING and f.default_factory is MISSING:
             kwargs[name] = None
     return cls(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Service status decoding (nested responses)
+# ---------------------------------------------------------------------------
+
+def _build(cls: type[T], data: dict[str, Any], **nested: Any) -> T:
+    """Like ``parse()``, with the nested fields passed in already built."""
+    mapped = from_camel(data)
+    fields = cls.__dataclass_fields__  # type: ignore[attr-defined]
+    kwargs = {k: v for k, v in mapped.items() if k in fields}
+    kwargs.update(nested)
+    return cls(**kwargs)
+
+
+def parse_service_status(data: dict[str, Any]) -> ServiceStatusResponse:
+    """Decode ``GET /v1/status``. Unknown keys are dropped at every level; string values are kept as sent."""
+    c = data["components"]
+    notice = data.get("notice")
+    return _build(
+        ServiceStatusResponse,
+        data,
+        notice=parse(StatusNotice, notice) if notice is not None else None,
+        components=StatusComponents(
+            sending=parse(SendingComponent, c["sending"]),
+            receiving=parse(ReceivingComponent, c["receiving"]),
+            node=parse(NodeComponent, c["node"]),
+            webhooks=parse(WebhooksComponent, c["webhooks"]),
+        ),
+    )
+
+
+def _parse_status_bucket(b: dict[str, Any]) -> StatusBucket:
+    return _build(
+        StatusBucket,
+        b,
+        overall=parse(StatusBucketState, b["overall"]),
+        sending=parse(StatusBucketSending, b["sending"]),
+        receiving=parse(StatusBucketReceiving, b["receiving"]),
+        node=parse(StatusBucketNode, b["node"]),
+        webhooks=parse(StatusBucketWebhooks, b["webhooks"]),
+    )
+
+
+def parse_service_status_history(data: dict[str, Any]) -> ServiceStatusHistoryResponse:
+    """Decode ``GET /v1/status/history``. Unknown keys are dropped at every level; string values are kept as sent."""
+    s = data["summary"]
+    uptime = s["uptime"]
+    return _build(
+        ServiceStatusHistoryResponse,
+        data,
+        from_=data["from"],
+        summary=_build(
+            StatusSummary,
+            s,
+            uptime=StatusUptime(**{part: parse(UptimeShare, uptime[part]) for part in StatusUptime.__dataclass_fields__}),
+            settle_times=[parse(SettleTimeCount, t) for t in s["settleTimes"]],
+        ),
+        buckets=[_parse_status_bucket(b) for b in data["buckets"]],
+        notices=[parse(StatusNotice, n) for n in data["notices"]],
+    )

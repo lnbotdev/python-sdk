@@ -39,8 +39,9 @@ def create_client(
     json_body: Any = None,
     *,
     content_type: str = "application/json",
+    api_key: str | None = "key_test",
 ) -> tuple[LnBot, CapturedRequest]:
-    """Create an LnBot client backed by a mock transport."""
+    """Create an LnBot client backed by a mock transport. Pass ``api_key=None`` for a client without a key."""
     captured = CapturedRequest()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -53,7 +54,7 @@ def create_client(
 
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
-    return LnBot(api_key="key_test", http_client=client), captured
+    return LnBot(api_key=api_key, http_client=client), captured
 
 
 def create_async_client(
@@ -61,8 +62,9 @@ def create_async_client(
     json_body: Any = None,
     *,
     content_type: str = "application/json",
+    api_key: str | None = "key_test",
 ) -> tuple[AsyncLnBot, CapturedRequest]:
-    """Create an AsyncLnBot client backed by a mock transport."""
+    """Create an AsyncLnBot client backed by a mock transport. Pass ``api_key=None`` for a client without a key."""
     captured = CapturedRequest()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -75,7 +77,7 @@ def create_async_client(
 
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport)
-    return AsyncLnBot(api_key="key_test", http_client=client), captured
+    return AsyncLnBot(api_key=api_key, http_client=client), captured
 
 
 def create_sse_client(sse_text: str) -> tuple[LnBot, CapturedRequest]:

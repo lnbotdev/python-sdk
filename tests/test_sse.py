@@ -8,7 +8,7 @@ import json
 import httpx
 import pytest
 
-from lnbot import LnBot
+from lnbot import LnBot, PaymentStage
 from lnbot.errors import ForbiddenError, UnauthorizedError
 from conftest import create_async_sse_client, create_sse_client
 
@@ -213,6 +213,8 @@ class TestEventsStream:
 PAYMENT_SETTLED = '{"number":1,"status":"settled","amount":20,"max_fee":5,"service_fee":1,"actual_fee":3,"address":"bub@bub.gg","reference":null,"preimage":"ab12...","tx_number":4,"failure_reason":null,"created_at":"2026-10-24T14:50:01Z","settled_at":"2026-10-24T14:50:14Z"}'
 PAYMENT_FAILED = '{"number":2,"status":"failed","amount":20,"max_fee":5,"service_fee":1,"actual_fee":null,"address":"bub@bub.gg","reference":null,"preimage":null,"tx_number":null,"failure_reason":"No route found","created_at":"2026-10-24T14:50:01Z","settled_at":null}'
 PAYMENT_PENDING = '{"number":3,"status":"pending","amount":20,"max_fee":5,"service_fee":1,"actual_fee":null,"address":"bub@bub.gg","reference":null,"preimage":null,"tx_number":null,"failure_reason":null,"created_at":"2026-10-24T14:50:01Z","settled_at":null}'
+PAYMENT_IN_FLIGHT = '{"number":4,"status":"processing","amount":1000,"max_fee":20,"service_fee":3,"actual_fee":null,"address":"lnbc10u1p...","reference":null,"preimage":null,"tx_number":null,"failure_reason":null,"created_at":"2026-10-25T14:33:53+00:00","settled_at":null,"stage":"in_flight","status_detail":"Sent; the Lightning network is completing it, usually within seconds.","retry_until":null}'
+PAYMENT_RETRYING = '{"number":4,"status":"pending","amount":1000,"max_fee":20,"service_fee":3,"actual_fee":null,"address":"lnbc10u1p...","reference":null,"preimage":null,"tx_number":null,"failure_reason":null,"created_at":"2026-10-25T14:33:53+00:00","settled_at":null,"stage":"retrying","status_detail":"Not sent yet; retrying for a few minutes. If it still can\'t be sent, it fails and the funds are released.","retry_until":"2026-10-25T14:43:53+00:00"}'
 INVOICE_SETTLED = '{"number":7,"status":"settled","amount":1000,"bolt11":"lnbc10u1p...","reference":null,"memo":null,"preimage":"cd34...","tx_number":4,"created_at":"2026-10-24T14:40:00Z","settled_at":"2026-10-24T14:41:30Z","expires_at":"2026-10-24T15:40:00Z"}'
 INVOICE_PENDING = '{"number":8,"status":"pending","amount":1000,"bolt11":"lnbc10u1p...","reference":null,"memo":null,"preimage":null,"tx_number":null,"created_at":"2026-10-24T14:40:00Z","settled_at":null,"expires_at":"2026-10-24T15:40:00Z"}'
 
@@ -282,6 +284,37 @@ class TestWirePayloads:
         assert p.status == "pending"
         assert (p.max_fee, p.service_fee) == (5, 1)
         assert p.created_at == "2026-10-24T14:50:01Z"
+
+    def test_payment_timeout_carries_stage_fields(self, use_async):
+        events = _events(f": keepalive\n\nevent: timeout\ndata: {PAYMENT_IN_FLIGHT}\n\n", use_async, _watch_payment)
+        assert len(events) == 1
+        assert events[0].event == "timeout"
+        p = events[0].data
+        assert (p.number, p.status, p.amount) == (4, "processing", 1000)
+        assert (p.max_fee, p.service_fee, p.actual_fee) == (20, 3, None)
+        assert p.stage == PaymentStage.IN_FLIGHT
+        assert p.status_detail == "Sent; the Lightning network is completing it, usually within seconds."
+        assert p.retry_until is None
+        assert p.created_at == "2026-10-25T14:33:53+00:00"
+
+    def test_payment_timeout_while_retrying(self, use_async):
+        events = _events(f"event: timeout\ndata: {PAYMENT_RETRYING}\n\n", use_async, _watch_payment)
+        assert len(events) == 1
+        p = events[0].data
+        assert (p.status, p.stage) == ("pending", "retrying")
+        assert p.status_detail is not None and p.status_detail.startswith("Not sent yet;")
+        assert p.retry_until == "2026-10-25T14:43:53+00:00"
+
+    def test_payment_event_without_stage_fields(self, use_async):
+        events = _events(f"event: settled\ndata: {PAYMENT_SETTLED}\n\n", use_async, _watch_payment)
+        p = events[0].data
+        assert (p.stage, p.status_detail, p.retry_until) == (None, None, None)
+
+    def test_payment_event_with_unknown_stage(self, use_async):
+        payload = PAYMENT_IN_FLIGHT.replace('"in_flight"', '"teleporting"')
+        events = _events(f"event: timeout\ndata: {payload}\n\n", use_async, _watch_payment)
+        assert len(events) == 1
+        assert (events[0].data.stage, events[0].data.status) == ("teleporting", "processing")
 
     def test_invoice_settled_decodes_tx_number_and_timestamps(self, use_async):
         events = _events(f"event: settled\ndata: {INVOICE_SETTLED}\n\n", use_async, _watch_invoice)

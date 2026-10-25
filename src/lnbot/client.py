@@ -15,6 +15,7 @@ from .errors import (
     ForbiddenError,
     LnBotError,
     NotFoundError,
+    TooManyRequestsError,
     UnauthorizedError,
     _extract_message,
 )
@@ -43,12 +44,16 @@ from .types import (
     RestorePasskeyBeginResponse,
     RestorePasskeyCompleteResponse,
     RotateApiKeyResponse,
+    ServiceStatusHistoryResponse,
+    ServiceStatusResponse,
     TransactionResponse,
     TransferAddressResponse,
     WalletResponse,
     WebhookResponse,
     parse,
     parse_event_data,
+    parse_service_status,
+    parse_service_status_history,
     snake_keys,
     to_camel,
 )
@@ -82,6 +87,8 @@ def _raise_for_status(response: httpx.Response) -> None:
             raise NotFoundError(body)
         case 409:
             raise ConflictError(body)
+        case 429:
+            raise TooManyRequestsError(body)
         case _:
             msg = _extract_message(body, response.reason_phrase or "Error")
             raise LnBotError(msg, response.status_code, body)
@@ -233,7 +240,7 @@ class PaymentsResource:
     def create(self, *, target: str, amount: int | None = None, idempotency_key: str | None = None, max_fee: int | None = None, reference: str | None = None) -> PaymentResponse:
         """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice).
 
-        *max_fee* caps the network fee (Spark's fee plus Lightning routing). Leave it unset to use
+        *max_fee* caps the network fee (0.25% plus Lightning routing). Leave it unset to use
         the server default: 1% of the amount, minimum 20 sats.
         """
         body = to_camel({"target": target, "amount": amount, "idempotency_key": idempotency_key, "max_fee": max_fee, "reference": reference})
@@ -489,6 +496,23 @@ class LnBot:
     def me(self) -> MeResponse:
         """Get authenticated identity."""
         return parse(MeResponse, self._get("/v1/me"))
+
+    def status(self) -> ServiceStatusResponse:
+        """Get the service status right now: overall, per component, and any notice from the operators.
+
+        Public: no API key needed. Measured about once a minute. The public routes allow 10 requests a
+        minute per IP; over that, raises ``TooManyRequestsError``.
+        """
+        return parse_service_status(self._get("/v1/status"))
+
+    def status_history(self, range: str = "24h") -> ServiceStatusHistoryResponse:
+        """Get the service status over time, for charts.
+
+        *range* is ``"24h"`` (5-minute buckets, the default), ``"7d"`` (hourly), ``"30d"`` (6-hourly)
+        or ``"90d"`` (daily); the API answers anything else with ``BadRequestError``. Public: no API key
+        needed, and it shares the 10 requests a minute per IP of ``status()``.
+        """
+        return parse_service_status_history(self._get("/v1/status/history", params={"range": range}))
 
     def wallet(self, wallet_id: str) -> Wallet:
         """Return a wallet-scoped handle."""
@@ -855,6 +879,14 @@ class AsyncLnBot:
 
     async def me(self) -> MeResponse:
         return parse(MeResponse, await self._get("/v1/me"))
+
+    async def status(self) -> ServiceStatusResponse:
+        """Get the service status right now. Public: no API key needed. See ``LnBot.status()``."""
+        return parse_service_status(await self._get("/v1/status"))
+
+    async def status_history(self, range: str = "24h") -> ServiceStatusHistoryResponse:
+        """Get the service status over time: *range* is ``"24h"`` (default), ``"7d"``, ``"30d"`` or ``"90d"``. See ``LnBot.status_history()``."""
+        return parse_service_status_history(await self._get("/v1/status/history", params={"range": range}))
 
     def wallet(self, wallet_id: str) -> AsyncWallet:
         if not wallet_id:

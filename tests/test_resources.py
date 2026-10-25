@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from lnbot import PaymentStage
 from conftest import create_async_client, create_client
 
 
@@ -339,6 +340,81 @@ class TestAsyncPayments:
         })
         asyncio.run(ln.wallet("wal_1").payments.create(target="user@example.com", amount=5000))
         assert cap.json_body == {"target": "user@example.com", "amount": 5000}
+
+
+# ---------------------------------------------------------------------------
+# Payment stages: stage, statusDetail, retryUntil
+# ---------------------------------------------------------------------------
+
+PAYMENT_RETRYING = {
+    "number": 4, "status": "pending", "amount": 1000, "maxFee": 20, "serviceFee": 3, "actualFee": None,
+    "address": "lnbc10u1p...", "reference": None, "preimage": None, "txNumber": None, "failureReason": None,
+    "createdAt": "2026-10-25T14:33:53+00:00", "settledAt": None, "stage": "retrying",
+    "statusDetail": "Not sent yet; retrying for a few minutes. If it still can't be sent, it fails and the funds are released.",
+    "retryUntil": "2026-10-25T14:43:53+00:00",
+}
+
+PAYMENT_WITHOUT_STAGE = {
+    "number": 3, "status": "settled", "amount": 500, "maxFee": 20, "serviceFee": 1, "actualFee": 2,
+    "address": "x4k7m2@ln.bot", "reference": None, "preimage": "9f2c...", "txNumber": 12, "failureReason": None,
+    "createdAt": "2026-10-25T14:30:00+00:00", "settledAt": "2026-10-25T14:30:01+00:00",
+}
+
+PAYMENT_UNKNOWN_STAGE = {
+    "number": 5, "status": "processing", "amount": 1000, "maxFee": 20, "serviceFee": 3, "actualFee": None,
+    "address": "x4k7m2@ln.bot", "reference": None, "preimage": None, "txNumber": None, "failureReason": None,
+    "createdAt": "2026-10-25T14:35:00+00:00", "settledAt": None, "stage": "teleporting",
+    "statusDetail": "Moving through a new kind of route.", "retryUntil": None,
+}
+
+
+class TestPaymentStages:
+    def test_get_retrying(self):
+        ln, cap = create_client(json_body=PAYMENT_RETRYING)
+        p = ln.wallet("wal_1").payments.get(4)
+        assert cap.path == "/v1/wallets/wal_1/payments/4"
+        assert p.status == "pending"
+        assert p.stage == PaymentStage.RETRYING
+        assert p.status_detail == PAYMENT_RETRYING["statusDetail"]
+        assert p.retry_until == "2026-10-25T14:43:53+00:00"
+
+    def test_create_returns_stage(self):
+        ln, _ = create_client(json_body=PAYMENT_RETRYING)
+        p = ln.wallet("wal_1").payments.create(target="lnbc10u1p...")
+        assert p.stage == "retrying"
+        assert p.retry_until == "2026-10-25T14:43:53+00:00"
+
+    def test_list_returns_stage(self):
+        ln, _ = create_client(json_body=[PAYMENT_RETRYING, PAYMENT_UNKNOWN_STAGE, PAYMENT_WITHOUT_STAGE])
+        ps = ln.wallet("wal_1").payments.list()
+        assert [p.stage for p in ps] == ["retrying", "teleporting", None]
+
+    def test_without_new_fields(self):
+        ln, _ = create_client(json_body=PAYMENT_WITHOUT_STAGE)
+        p = ln.wallet("wal_1").payments.get(3)
+        assert (p.number, p.status, p.actual_fee, p.tx_number) == (3, "settled", 2, 12)
+        assert p.stage is None
+        assert p.status_detail is None
+        assert p.retry_until is None
+
+    def test_unknown_stage(self):
+        ln, _ = create_client(json_body=PAYMENT_UNKNOWN_STAGE)
+        p = ln.wallet("wal_1").payments.get(5)
+        assert p.stage == "teleporting"
+        assert p.status == "processing"
+        assert p.status_detail == "Moving through a new kind of route."
+        assert p.retry_until is None
+
+    def test_async_get(self):
+        ln, _ = create_async_client(json_body=PAYMENT_UNKNOWN_STAGE)
+        p = asyncio.run(ln.wallet("wal_1").payments.get(5))
+        assert (p.stage, p.status) == ("teleporting", "processing")
+
+    def test_known_stages(self):
+        assert [PaymentStage.QUEUED, PaymentStage.RETRYING, PaymentStage.SENDING, PaymentStage.IN_FLIGHT,
+                PaymentStage.CONFIRMING, PaymentStage.ON_HOLD, PaymentStage.SETTLED, PaymentStage.FAILED] == [
+            "queued", "retrying", "sending", "in_flight", "confirming", "on_hold", "settled", "failed",
+        ]
 
 
 # ---------------------------------------------------------------------------

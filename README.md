@@ -81,11 +81,42 @@ Event stream and webhook payloads use snake_case on the wire (`max_fee`, `create
 payment = w.payments.create(target="alice@ln.bot", amount=500)
 ```
 
-Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sats), which covers the network fee (Spark's 0.25% plus Lightning routing) for most payments. Only the fee estimate plus a small buffer is held while the payment is in flight. On success the wallet is debited `amount + actual_fee + service_fee`.
+Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sats), which covers the network fee (0.25% plus Lightning routing) for most payments. Only the fee estimate plus a small buffer is held while the payment is in flight. On success the wallet is debited `amount + actual_fee + service_fee`.
 
 If the fee estimate is above the limit, `create` raises `BadRequestError` (for example `Network fee estimate (X sats) exceeds maxFee (Y sats).`). Pass a higher `max_fee` only if you accept that fee.
 
 A payment can stay `pending` for a while: it is retried automatically until it settles or fails. It fails if the invoice expires first, and after 24 hours at most. If `watch()` runs out of time first, it ends with a `timeout` event whose `data` is the current state: check again with `w.payments.get(payment.number)` or watch again. A failed payment carries the reason in `failure_reason`.
+
+### Payment stages
+
+Every payment carries `stage`, which says where it is more precisely than `status`, and `status_detail`, a sentence to show your user as is:
+
+```python
+from lnbot import PaymentStage
+
+p = w.payments.get(payment.number)
+print(p.status, p.stage, p.status_detail)
+
+if p.stage == PaymentStage.RETRYING:
+    print("Retried until", p.retry_until)
+```
+
+| `stage` | With `status` | `status_detail` |
+|---------|---------------|-----------------|
+| `queued` | `pending` | Waiting to be sent. |
+| `retrying` | `pending` | Not sent yet; retrying for a few minutes. If it still can't be sent, it fails and the funds are released. |
+| `sending` | `pending` or `processing` | Being sent. Between ln.bot wallets: Being transferred to the recipient's wallet. |
+| `in_flight` | `processing` | Sent; the Lightning network is completing it, usually within seconds. |
+| `confirming` | `processing` | Checking with the Lightning network whether it went out. The funds stay on hold until then. |
+| `on_hold` | `processing` | Interrupted by an earlier version of the service and on hold until it is reviewed. The funds are held, not lost. |
+| `settled` | `settled` | `None` |
+| `failed` | `failed` | The `failure_reason` |
+
+A `retrying` payment carries `retry_until`: if it still can't be sent by then, it fails within about a minute and the funds are released. A payment can go from `processing` back to `pending` when it is retried, so treat both as in progress.
+
+`stage` is a plain string and more stages may be added: for one you don't know, go by `status`. When the API doesn't send them, `stage`, `status_detail` and `retry_until` are `None`.
+
+`watch()` events carry the same fields, but the stream only ends with `settled`, `failed` or `timeout` (the payment's current state): it doesn't send stage changes as they happen. Webhooks and `w.events.stream()` don't carry `stage`.
 
 ### Price a payment before sending
 
@@ -157,7 +188,55 @@ ln.wallets.list()                   # List wallets
 ln.keys.rotate(0)                   # Rotate account key
 ln.invoices.create_for_wallet(...)  # Public invoice by wallet ID
 ln.invoices.create_for_address(...) # Public invoice by address
+ln.status()                         # Service status now (no key needed)
+ln.status_history("7d")             # Service status over time (no key needed)
 ```
+
+---
+
+## Service status
+
+Whether ln.bot is working, measured about once a minute. Both calls are public: they need no API key and no wallet.
+
+```python
+from lnbot import LnBot
+
+ln = LnBot()
+s = ln.status()
+print(s.status)  # "operational", "degraded", "outage" or "unknown"
+
+if s.notice:
+    print(s.notice.level, s.notice.message)  # a message from the operators
+
+sending = s.components.sending
+print(sending.in_progress, sending.by_stage, sending.median_seconds)
+```
+
+`s.components` has `sending` (payments out), `receiving` (payments in), `node` (the Lightning node) and `webhooks` (deliveries), each with its own `status`. `unknown` means nothing was measured for 5 minutes, and the numbers are as old as `s.updated_at`. A number that wasn't measured is `None`, for example `sending.median_seconds` when nothing was sent.
+
+```python
+h = ln.status_history("7d")
+print(h.summary.uptime.overall.operational)  # percent of the measured time
+
+for b in h.buckets:
+    if b.samples == 0:
+        continue  # not measured: no data, neither up nor down
+    uptime = (b.samples - b.overall.degraded - b.overall.outage) / b.samples
+    print(b.at, f"{uptime:.1%}", b.sending.sent, b.sending.p95_seconds)
+```
+
+| `range` | One bucket per | `bucket_seconds` |
+|---------|----------------|------------------|
+| `24h` (default) | 5 minutes | 300 |
+| `7d` | hour | 3600 |
+| `30d` | 6 hours | 21600 |
+| `90d` | day | 86400 |
+
+Buckets are aligned to UTC and the last one is still filling, so don't assume how many there are. `h.summary` covers the whole range, with `settle_times` as a histogram of settlement times, and `h.notices` lists the operators' notices during it. The range starts at `h.from_` (`from` in the JSON). Any other `range` raises `BadRequestError`.
+
+Statuses and notice levels are plain strings, like `stage`, and new values may be added: compare them with the constants in `ServiceState` and `NoticeLevel`, and handle a value you don't know.
+
+Both calls share the API's limit for public routes, 10 requests a minute per IP; over it they raise `TooManyRequestsError` (status 429). The status changes about once a minute, so there is no point asking more often.
 
 ---
 
@@ -184,7 +263,7 @@ async with AsyncLnBot(api_key="uk_...") as ln:
 ## Error handling
 
 ```python
-from lnbot import LnBot, BadRequestError, UnauthorizedError, NotFoundError, ConflictError, LnBotError
+from lnbot import LnBot, BadRequestError, UnauthorizedError, NotFoundError, ConflictError, TooManyRequestsError, LnBotError
 
 try:
     w.payments.create(target="invalid", amount=100)
@@ -196,6 +275,8 @@ except NotFoundError:
     ...  # 404
 except ConflictError:
     ...  # 409
+except TooManyRequestsError:
+    ...  # 429
 except LnBotError as e:
     print(e.status, e.body)
 ```
@@ -240,7 +321,7 @@ print(v.valid)
 - **Zero extra dependencies** — only `httpx`
 - **Wallet-scoped API** — `ln.wallet(id)` returns a typed scope with all sub-resources
 - **Sync + async** — `LnBot` and `AsyncLnBot` with identical APIs
-- **Typed exceptions** — `BadRequestError`, `NotFoundError`, `ConflictError`, `UnauthorizedError`, `ForbiddenError`
+- **Typed exceptions** — `BadRequestError`, `NotFoundError`, `ConflictError`, `UnauthorizedError`, `ForbiddenError`, `TooManyRequestsError`
 - **SSE support** — `watch()` returns an iterator/async iterator for real-time events
 - **Dataclass responses** — all responses are frozen dataclasses
 

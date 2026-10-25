@@ -10,6 +10,7 @@ from lnbot.errors import (
     ForbiddenError,
     LnBotError,
     NotFoundError,
+    TooManyRequestsError,
     UnauthorizedError,
     _extract_message,
 )
@@ -43,6 +44,7 @@ class TestTypedErrors:
             (ForbiddenError, 403, "Forbidden"),
             (NotFoundError, 404, "Not Found"),
             (ConflictError, 409, "Conflict"),
+            (TooManyRequestsError, 429, "Too Many Requests"),
         ],
     )
     def test_status_code(self, cls, status, fallback):
@@ -52,7 +54,7 @@ class TestTypedErrors:
 
     @pytest.mark.parametrize(
         "cls",
-        [BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError, ConflictError],
+        [BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError, ConflictError, TooManyRequestsError],
     )
     def test_extracts_message_from_json(self, cls):
         e = cls('{"message":"custom error"}')
@@ -66,6 +68,7 @@ class TestTypedErrors:
             (ForbiddenError, "Forbidden"),
             (NotFoundError, "Not Found"),
             (ConflictError, "Conflict"),
+            (TooManyRequestsError, "Too Many Requests"),
         ],
     )
     def test_fallback_on_invalid_json(self, cls, fallback):
@@ -85,6 +88,9 @@ class TestExtractMessage:
 
     def test_invalid_json(self):
         assert _extract_message("not json", "fallback") == "fallback"
+
+    def test_rate_limit_body(self):
+        assert _extract_message('{"error":"Too many requests. Please try again later."}', "fallback") == "Too many requests. Please try again later."
 
     def test_no_known_fields(self):
         assert _extract_message('{"detail":"something"}', "fallback") == "fallback"

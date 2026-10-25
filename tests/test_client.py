@@ -13,6 +13,7 @@ from lnbot.errors import (
     ForbiddenError,
     LnBotError,
     NotFoundError,
+    TooManyRequestsError,
     UnauthorizedError,
 )
 from conftest import create_client
@@ -96,9 +97,11 @@ class TestHeaders:
         ln.register()
         assert cap.headers["authorization"] == "Bearer key_test"
 
-    def test_omits_auth_when_no_key(self):
+    def test_omits_auth_when_no_key(self, monkeypatch):
         from conftest import CapturedRequest
         import json
+
+        monkeypatch.delenv("LNBOT_API_KEY", raising=False)
 
         captured = CapturedRequest()
 
@@ -217,6 +220,7 @@ class TestErrorMapping:
             (403, ForbiddenError),
             (404, NotFoundError),
             (409, ConflictError),
+            (429, TooManyRequestsError),
         ],
     )
     def test_raises_typed_error(self, status, exc_class):
