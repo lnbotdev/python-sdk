@@ -240,8 +240,8 @@ class PaymentsResource:
     def create(self, *, target: str, amount: int | None = None, idempotency_key: str | None = None, max_fee: int | None = None, reference: str | None = None) -> PaymentResponse:
         """Send a payment to *target* (Lightning address, LNURL, or BOLT11 invoice).
 
-        *max_fee* caps the network fee (0.25% plus Lightning routing). Leave it unset to use
-        the server default: 1% of the amount, minimum 20 sats.
+        *max_fee* caps the network fee: the Lightning routing, on top of the 0.25% service fee.
+        Leave it unset to use the server default: 1% of the amount, minimum 20 sats.
         """
         body = to_camel({"target": target, "amount": amount, "idempotency_key": idempotency_key, "max_fee": max_fee, "reference": reference})
         return parse(PaymentResponse, self._c._post(f"{self._prefix}/payments", body))

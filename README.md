@@ -81,7 +81,7 @@ Event stream and webhook payloads use snake_case on the wire (`max_fee`, `create
 payment = w.payments.create(target="alice@ln.bot", amount=500)
 ```
 
-Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sats), which covers the network fee (0.25% plus Lightning routing) for most payments. Only the fee estimate plus a small buffer is held while the payment is in flight. On success the wallet is debited `amount + actual_fee + service_fee`.
+A payment out to Lightning pays a service fee of 0.25% (minimum 1 sat) and the network fee, which is the Lightning routing fee. Leave `max_fee` unset. The server defaults it to 1% of the amount (minimum 20 sats), which covers the network fee for most payments. Only the fee estimate plus a small buffer is held while the payment is in flight. On success the wallet is debited `amount + actual_fee + service_fee`.
 
 If the fee estimate is above the limit, `create` raises `BadRequestError` (for example `Network fee estimate (X sats) exceeds maxFee (Y sats).`). Pass a higher `max_fee` only if you accept that fee.
 

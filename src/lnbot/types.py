@@ -129,7 +129,7 @@ class PaymentResponse:
     """Service fee in sats: 0.25%, minimum 1 sat. 0 for internal transfers."""
     address: str
     actual_fee: int | None = None
-    """Network fee actually charged in sats (0.25% plus Lightning routing). None until settled."""
+    """Network fee actually charged in sats: the Lightning routing (the 0.25% service fee is separate). None until settled."""
     reference: str | None = None
     preimage: str | None = None
     tx_number: int | None = None
@@ -189,7 +189,7 @@ class ResolveTargetResponse:
     internal: bool = False
     """True if the recipient is a wallet on ln.bot: a free internal transfer."""
     network_fee_estimate: int | None = None
-    """Estimated network fee in sats (0.25% plus Lightning routing). None without an amount or if no estimate is available. 0 if internal."""
+    """Estimated network fee in sats: the Lightning routing. None without an amount or if no estimate is available. 0 if internal."""
     service_fee: int | None = None
     """Service fee in sats: 0.25%, minimum 1 sat. 0 if internal. None without an amount."""
     max_fee: int | None = None
@@ -329,7 +329,7 @@ class L402PayResponse:
     authorization: str | None = None
     preimage: str | None = None
     fee: int | None = None
-    """Network fee actually charged in sats (0.25% plus Lightning routing). None until settled."""
+    """Network fee actually charged in sats: the Lightning routing (the 0.25% service fee is separate). None until settled."""
 
 
 # ---------------------------------------------------------------------------
